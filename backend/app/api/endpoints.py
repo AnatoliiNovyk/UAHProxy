@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy import delete, or_
 from typing import List, Optional
 from datetime import datetime
 
@@ -553,12 +554,21 @@ async def list_clusters(db: AsyncSession = Depends(get_db)):
 
 @router.post("/clusters/wizard")
 async def generate_cluster_configs(req: ClusterWizardRequest, db: AsyncSession = Depends(get_db)):
+    if req.master_server_id == req.backup_server_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Master та Backup не можуть бути одним і тим же сервером. Будь ласка, оберіть два різні підключені вузли."
+        )
+
     m_res = await db.execute(select(Server).where(Server.id == req.master_server_id))
     b_res = await db.execute(select(Server).where(Server.id == req.backup_server_id))
     master = m_res.scalars().first()
     backup = b_res.scalars().first()
     if not master or not backup:
-        raise HTTPException(status_code=404, detail="Master or Backup server not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Один або обидва обрані сервери не знайдено в базі даних. Будь ласка, перевірте список доступних серверів."
+        )
 
     m_conf, b_conf = KeepalivedService.generate_configs(
         cluster_name=req.name,
@@ -751,6 +761,19 @@ async def delete_server(server_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Server not found")
     
     hostname = server.hostname
+    
+    # 1. Clean any clusters referencing this server as master or slave
+    await db.execute(delete(KeepalivedCluster).where(
+        or_(KeepalivedCluster.master_server_id == server_id, KeepalivedCluster.slave_server_id == server_id)
+    ))
+    
+    # 2. Clean config histories
+    await db.execute(delete(ConfigHistory).where(ConfigHistory.server_id == server_id))
+    
+    # 3. Clean service statuses
+    await db.execute(delete(ServiceStatus).where(ServiceStatus.server_id == server_id))
+    
+    # 4. Delete the server record
     await db.delete(server)
     
     audit = AuditLog(username="admin", action="DELETE_SERVER", resource_type="Server", resource_id=str(server_id), details=f"Deleted server {hostname}")

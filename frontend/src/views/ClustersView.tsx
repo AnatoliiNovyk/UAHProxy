@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Network, Plus, Shield, CheckCircle2, Play, RefreshCw, AlertTriangle, Layers, Server, Zap, Activity } from 'lucide-react';
+import { Network, Plus, Shield, CheckCircle2, Play, RefreshCw, AlertTriangle, Layers, Server, Zap, Activity, Trash2 } from 'lucide-react';
 import { Language, translations } from '../i18n/translations';
 import { Server as ServerType, Cluster } from '../types';
 import { api } from '../services/api';
@@ -15,14 +15,15 @@ export const ClustersView: React.FC<ClustersViewProps> = ({ lang, servers }) => 
   const [showWizard, setShowWizard] = useState(false);
   const [loading, setLoading] = useState(false);
   const [deploying, setDeploying] = useState<number | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [failoverMsg, setFailoverMsg] = useState<string | null>(null);
 
   // Wizard form state
   const [clusterName, setClusterName] = useState('HA-Production-VIP');
   const [virtualIp, setVirtualIp] = useState('192.168.1.250');
   const [routerId, setRouterId] = useState(51);
-  const [masterServerId, setMasterServerId] = useState<number>(servers[0]?.id || 1);
-  const [backupServerId, setBackupServerId] = useState<number>(servers[1]?.id || 2);
+  const [masterServerId, setMasterServerId] = useState<number>(servers[0]?.id || 0);
+  const [backupServerId, setBackupServerId] = useState<number>(servers[1]?.id || servers[0]?.id || 0);
   const [networkInterface, setNetworkInterface] = useState('eth0');
   const [checkScript, setCheckScript] = useState('killall -0 haproxy');
   const [generatedConfigs, setGeneratedConfigs] = useState<{ master_config: string; backup_config: string } | null>(null);
@@ -30,6 +31,16 @@ export const ClustersView: React.FC<ClustersViewProps> = ({ lang, servers }) => 
   useEffect(() => {
     loadClusters();
   }, []);
+
+  useEffect(() => {
+    if (servers.length >= 2) {
+      if (!servers.find(s => s.id === masterServerId)) setMasterServerId(servers[0].id);
+      if (!servers.find(s => s.id === backupServerId) || backupServerId === (servers[0]?.id || 0)) setBackupServerId(servers[1].id);
+    } else if (servers.length === 1) {
+      setMasterServerId(servers[0].id);
+      setBackupServerId(servers[0].id);
+    }
+  }, [servers]);
 
   const loadClusters = async () => {
     try {
@@ -40,7 +51,23 @@ export const ClustersView: React.FC<ClustersViewProps> = ({ lang, servers }) => 
     }
   };
 
+  const handleOpenWizard = () => {
+    if (servers.length < 2) {
+      alert('Увага: Для створення Keepalived VRRP кластера необхідно щонайменше 2 підключені сервери (Master та Backup). Будь ласка, додайте ще один сервер у вкладці "Сервери".');
+    }
+    setShowWizard(true);
+  };
+
   const handleGenerateConfigs = async () => {
+    if (servers.length < 2) {
+      alert('Неможливо згенерувати конфігурації: у системі менше 2 серверів.');
+      return;
+    }
+    if (masterServerId === backupServerId) {
+      alert('Помилка: Master та Backup вузли повинні бути двома різними серверами!');
+      return;
+    }
+
     try {
       const res = await api.generateClusterConfigs({
         name: clusterName,
@@ -53,11 +80,20 @@ export const ClustersView: React.FC<ClustersViewProps> = ({ lang, servers }) => 
       });
       setGeneratedConfigs(res);
     } catch (e: any) {
-      alert(`Error generating VRRP configs: ${e.message}`);
+      alert(`Помилка генерації VRRP: ${e.response?.data?.detail || e.message}`);
     }
   };
 
   const handleCreateAndDeploy = async () => {
+    if (servers.length < 2) {
+      alert('Неможливо створити кластер: у системі менше 2 серверів.');
+      return;
+    }
+    if (masterServerId === backupServerId) {
+      alert('Помилка: Master та Backup вузли повинні бути двома різними серверами!');
+      return;
+    }
+
     setLoading(true);
     try {
       const newCluster = await api.createCluster({
@@ -75,7 +111,7 @@ export const ClustersView: React.FC<ClustersViewProps> = ({ lang, servers }) => 
       setShowWizard(false);
       loadClusters();
     } catch (e: any) {
-      alert(`Помилка розгортання кластера: ${e.message}`);
+      alert(`Помилка розгортання кластера: ${e.response?.data?.detail || e.message}`);
     } finally {
       setLoading(false);
     }
@@ -88,9 +124,25 @@ export const ClustersView: React.FC<ClustersViewProps> = ({ lang, servers }) => 
       alert(res.message || 'Keepalived успішно розгорнуто та запущено!');
       loadClusters();
     } catch (e: any) {
-      alert(`Deploy error: ${e.message}`);
+      alert(`Помилка розгортання: ${e.response?.data?.detail || e.message}`);
     } finally {
       setDeploying(null);
+    }
+  };
+
+  const handleDeleteCluster = async (clusterId: number, name: string) => {
+    if (!window.confirm(`Ви дійсно бажаєте видалити VRRP кластер "${name}"?`)) {
+      return;
+    }
+
+    setDeletingId(clusterId);
+    try {
+      await api.deleteCluster(clusterId);
+      loadClusters();
+    } catch (e: any) {
+      alert(`Помилка видалення кластера: ${e.response?.data?.detail || e.message}`);
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -100,111 +152,143 @@ export const ClustersView: React.FC<ClustersViewProps> = ({ lang, servers }) => 
       setFailoverMsg(res.message);
       loadClusters();
     } catch (e: any) {
-      alert(`Failover test error: ${e.message}`);
+      alert(`Помилка тестування Failover: ${e.response?.data?.detail || e.message}`);
     }
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      {/* Header */}
+      <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-white flex items-center space-x-2">
             <Network className="w-6 h-6 text-purple-400" />
-            <span>Keepalived VRRP Кластери (High Availability)</span>
+            <span>High-Availability Кластери (Keepalived VRRP)</span>
           </h1>
-          <p className="text-gray-400 text-xs mt-1">Керування відмовостійкими парами Master/Backup з плаваючим Virtual IP (VIP)</p>
+          <p className="text-gray-400 text-xs mt-1">
+            Керування плаваючими Virtual IP (VIP), VRRP-маршрутизацією та автоматичним перемиканням при збої (Failover)
+          </p>
         </div>
 
         <button
-          onClick={() => {
-            setShowWizard(true);
-            handleGenerateConfigs();
-          }}
-          className="px-4 py-2 rounded-xl bg-gradient-to-r from-purple-500 to-cyan-500 hover:from-purple-400 hover:to-cyan-400 text-black font-bold text-xs shadow-lg shadow-purple-950/50 flex items-center space-x-1.5 transition"
+          onClick={handleOpenWizard}
+          className="px-4 py-2 bg-gradient-to-r from-purple-500 to-cyan-500 hover:from-purple-400 hover:to-cyan-400 text-black font-semibold text-xs rounded-xl shadow-lg shadow-purple-950/50 flex items-center space-x-2 transition"
         >
           <Plus className="w-4 h-4" />
-          <span>Створити VRRP Кластер (Wizard)</span>
+          <span>Конструктор VRRP Кластера</span>
         </button>
       </div>
 
+      {/* Failover Test Notification */}
       {failoverMsg && (
-        <div className="p-4 rounded-xl bg-amber-950/60 border border-amber-800 text-amber-300 text-xs font-mono flex items-center justify-between">
+        <div className="p-4 rounded-xl bg-purple-950/60 border border-purple-800 text-xs text-purple-300 flex items-center justify-between">
           <div className="flex items-center space-x-2">
-            <Zap className="w-4 h-4 text-amber-400 flex-shrink-0" />
+            <Zap className="w-4 h-4 text-purple-400" />
             <span>{failoverMsg}</span>
           </div>
-          <button onClick={() => setFailoverMsg(null)} className="text-gray-400 hover:text-white">✕</button>
+          <button onClick={() => setFailoverMsg(null)} className="text-purple-400 hover:text-white">✕</button>
         </div>
       )}
 
       {/* Clusters List */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {clusters.map((c) => {
-          const master = servers.find(s => s.id === c.master_server_id);
-          const backup = servers.find(s => s.id === c.slave_server_id);
+      {clusters.length === 0 ? (
+        <div className="glass-panel p-12 rounded-2xl border border-gray-800 text-center space-y-4">
+          <div className="w-16 h-16 rounded-2xl bg-purple-950/60 border border-purple-800/80 mx-auto flex items-center justify-center text-purple-400">
+            <Layers className="w-8 h-8" />
+          </div>
+          <div className="space-y-1 max-w-md mx-auto">
+            <h3 className="font-bold text-white text-base">Немає налаштованих VRRP кластерів</h3>
+            <p className="text-xs text-gray-400">
+              Створіть відмовостійку зв'язку між двома серверами зі спільною Virtual IP адресою (VIP) для автоматичного Failover.
+            </p>
+          </div>
+          <button
+            onClick={handleOpenWizard}
+            className="px-5 py-2.5 bg-gradient-to-r from-purple-500 to-cyan-500 hover:from-purple-400 hover:to-cyan-400 text-black font-bold text-xs rounded-xl shadow-lg shadow-purple-950/50 inline-flex items-center space-x-2 transition"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Створити VRRP Кластер</span>
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {clusters.map((c) => {
+            const masterServer = servers.find((s) => s.id === c.master_server_id);
+            const backupServer = servers.find((s) => s.id === c.slave_server_id);
 
-          return (
-            <div key={c.id} className="glass-panel p-6 rounded-2xl border border-gray-800 space-y-4">
-              <div className="flex items-center justify-between border-b border-gray-800 pb-3">
-                <div className="flex items-center space-x-3">
-                  <div className="w-9 h-9 rounded-xl bg-purple-950/80 border border-purple-800 flex items-center justify-center text-purple-400">
-                    <Shield className="w-5 h-5" />
+            return (
+              <div key={c.id} className="glass-panel rounded-2xl p-6 border border-gray-800 space-y-5 hover:border-purple-900/50 transition">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 rounded-xl bg-purple-950/80 border border-purple-800 flex items-center justify-center text-purple-400">
+                      <Shield className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-white text-base">{c.name}</h3>
+                      <span className="text-xs font-mono text-cyan-400">Virtual IP: {c.virtual_ip}</span>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="font-bold text-white text-sm">{c.name}</h3>
-                    <div className="text-xs text-cyan-400 font-mono">VIP: {c.virtual_ip} (VRID {c.router_id})</div>
+
+                  <div className="flex items-center space-x-2">
+                    <span className="px-2.5 py-1 rounded-full text-[11px] font-mono font-bold bg-emerald-950 text-emerald-400 border border-emerald-800">
+                      {c.state || 'HEALTHY'}
+                    </span>
+                    <button
+                      onClick={() => handleDeleteCluster(c.id, c.name)}
+                      disabled={deletingId === c.id}
+                      title="Видалити кластер"
+                      className="p-1.5 rounded-lg bg-gray-800 hover:bg-rose-950 text-gray-400 hover:text-rose-400 border border-gray-700 hover:border-rose-800 transition"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
 
-                <span className="px-2.5 py-1 rounded text-xs font-bold font-mono bg-emerald-950 text-emerald-400 border border-emerald-800">
-                  ✓ {c.state}
-                </span>
-              </div>
-
-              {/* VRRP Nodes Pair */}
-              <div className="grid grid-cols-2 gap-3 text-xs font-mono">
-                <div className="p-3 rounded-xl bg-gray-900/80 border border-cyan-500/30 space-y-1">
-                  <div className="flex items-center justify-between text-cyan-400 font-bold">
-                    <span>👑 MASTER</span>
-                    <span className="text-[10px] text-gray-500">Prio: 101</span>
+                {/* Nodes Display */}
+                <div className="grid grid-cols-2 gap-3 pt-2">
+                  <div className="p-3 rounded-xl bg-gray-900/80 border border-gray-800 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-mono text-purple-400 font-bold uppercase">Master (Pri 101)</span>
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    </div>
+                    <div className="font-semibold text-xs text-white truncate">{masterServer?.hostname || `Server ID: ${c.master_server_id}`}</div>
+                    <div className="text-[11px] font-mono text-gray-400">{masterServer?.ip_address || '—'}</div>
                   </div>
-                  <div className="text-white truncate">{master?.hostname || `Node #${c.master_server_id}`}</div>
-                  <div className="text-gray-400 text-[11px]">{master?.ip_address}</div>
+
+                  <div className="p-3 rounded-xl bg-gray-900/80 border border-gray-800 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-mono text-gray-400 font-bold uppercase">Backup (Pri 100)</span>
+                      <span className="w-2 h-2 rounded-full bg-cyan-400"></span>
+                    </div>
+                    <div className="font-semibold text-xs text-white truncate">{backupServer?.hostname || `Server ID: ${c.slave_server_id}`}</div>
+                    <div className="text-[11px] font-mono text-gray-400">{backupServer?.ip_address || '—'}</div>
+                  </div>
                 </div>
 
-                <div className="p-3 rounded-xl bg-gray-900/80 border border-gray-800 space-y-1">
-                  <div className="flex items-center justify-between text-purple-400 font-bold">
-                    <span>🛡️ BACKUP</span>
-                    <span className="text-[10px] text-gray-500">Prio: 100</span>
-                  </div>
-                  <div className="text-white truncate">{backup?.hostname || `Node #${c.slave_server_id}`}</div>
-                  <div className="text-gray-400 text-[11px]">{backup?.ip_address}</div>
+                {/* Actions */}
+                <div className="flex items-center justify-between pt-2 border-t border-gray-800/80">
+                  <button
+                    onClick={() => handleFailoverTest(c.id)}
+                    className="px-3 py-1.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-xs text-purple-300 font-medium border border-gray-700 transition flex items-center space-x-1.5"
+                  >
+                    <Zap className="w-3.5 h-3.5" />
+                    <span>Тест Failover</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleDeploy(c.id)}
+                    disabled={deploying === c.id}
+                    className="px-3.5 py-1.5 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 text-xs font-semibold border border-cyan-800/60 transition flex items-center space-x-1.5"
+                  >
+                    {deploying === c.id ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                    <span>Перерозгорнути</span>
+                  </button>
                 </div>
               </div>
-
-              {/* Action Buttons */}
-              <div className="flex items-center justify-between pt-2 border-t border-gray-800/80">
-                <button
-                  onClick={() => handleFailoverTest(c.id)}
-                  className="px-3 py-1.5 rounded-lg bg-amber-950/60 hover:bg-amber-900 text-amber-300 border border-amber-800 text-xs font-medium flex items-center space-x-1.5 transition"
-                >
-                  <Zap className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Тест Failover (Збій Master)</span>
-                </button>
-
-                <button
-                  onClick={() => handleDeploy(c.id)}
-                  disabled={deploying === c.id}
-                  className="px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-cyan-300 border border-gray-700 text-xs font-medium flex items-center space-x-1.5 transition"
-                >
-                  {deploying === c.id ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-                  <span>Перерозгорнути</span>
-                </button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* VRRP Wizard Modal */}
       {showWizard && (
@@ -222,6 +306,19 @@ export const ClustersView: React.FC<ClustersViewProps> = ({ lang, servers }) => 
               </div>
               <button onClick={() => setShowWizard(false)} className="text-gray-400 hover:text-white text-sm">✕</button>
             </div>
+
+            {/* Warning if fewer than 2 servers */}
+            {servers.length < 2 && (
+              <div className="p-4 rounded-xl bg-amber-950/60 border border-amber-800 text-xs text-amber-300 flex items-start space-x-2.5">
+                <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-bold text-amber-200">Потрібно щонайменше 2 підключені сервери</div>
+                  <p className="text-gray-300 mt-0.5">
+                    Для створення відмовостійкого VRRP кластера необхідні два окремих вузли (Master та Backup). Зараз підключено: {servers.length} сервер(ів). Додайте ще один сервер у меню "Сервери".
+                  </p>
+                </div>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Settings Form */}
@@ -266,7 +363,7 @@ export const ClustersView: React.FC<ClustersViewProps> = ({ lang, servers }) => 
                       className="w-full mt-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-cyan-300 outline-none font-mono"
                     >
                       {servers.map((s) => (
-                        <option key={s.id} value={s.id}>{s.hostname}</option>
+                        <option key={s.id} value={s.id}>{s.hostname} ({s.ip_address})</option>
                       ))}
                     </select>
                   </div>
@@ -278,7 +375,7 @@ export const ClustersView: React.FC<ClustersViewProps> = ({ lang, servers }) => 
                       className="w-full mt-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-purple-300 outline-none font-mono"
                     >
                       {servers.map((s) => (
-                        <option key={s.id} value={s.id}>{s.hostname}</option>
+                        <option key={s.id} value={s.id}>{s.hostname} ({s.ip_address})</option>
                       ))}
                     </select>
                   </div>
@@ -307,8 +404,9 @@ export const ClustersView: React.FC<ClustersViewProps> = ({ lang, servers }) => 
 
                 <button
                   type="button"
+                  disabled={servers.length < 2 || masterServerId === backupServerId}
                   onClick={handleGenerateConfigs}
-                  className="w-full py-2 bg-gray-800 hover:bg-gray-700 text-xs text-cyan-300 rounded-xl font-semibold border border-gray-700 transition"
+                  className="w-full py-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-xs text-cyan-300 rounded-xl font-semibold border border-gray-700 transition"
                 >
                   Згенерувати Конфігурації для Перегляду
                 </button>
@@ -331,9 +429,9 @@ export const ClustersView: React.FC<ClustersViewProps> = ({ lang, servers }) => 
                   </button>
                   <button
                     type="button"
-                    disabled={loading}
+                    disabled={loading || servers.length < 2 || masterServerId === backupServerId}
                     onClick={handleCreateAndDeploy}
-                    className="px-5 py-2 rounded-xl bg-gradient-to-r from-purple-500 to-cyan-500 hover:from-purple-400 hover:to-cyan-400 text-black font-bold text-xs shadow-lg shadow-purple-950/50 flex items-center space-x-1.5 transition"
+                    className="px-5 py-2 rounded-xl bg-gradient-to-r from-purple-500 to-cyan-500 hover:from-purple-400 hover:to-cyan-400 disabled:opacity-50 text-black font-bold text-xs shadow-lg shadow-purple-950/50 flex items-center space-x-1.5 transition"
                   >
                     {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                     <span>Зберегти & Розгорнути Кластер</span>

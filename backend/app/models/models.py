@@ -76,10 +76,11 @@ class ServiceStatus(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     server_id = Column(Integer, ForeignKey("servers.id"), nullable=False)
-    service_type = Column(SQLEnum(ServiceTypeEnum), nullable=False)
-    is_active = Column(Boolean, default=False)
-    pid = Column(Integer, nullable=True)
-    uptime_seconds = Column(Integer, default=0)
+    service_name = Column(SQLEnum(ServiceTypeEnum), nullable=False)
+    is_running = Column(Boolean, default=False)
+    is_enabled = Column(Boolean, default=False)
+    uptime = Column(String(64), nullable=True)
+    version = Column(String(64), nullable=True)
     last_checked = Column(DateTime, default=datetime.utcnow)
 
     server = relationship("Server", back_populates="statuses")
