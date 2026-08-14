@@ -168,9 +168,18 @@ class SmonTargetOut(BaseModel):
     created_at: datetime
     latest_status: Optional[str] = "UP"
     latest_response_time: Optional[float] = 42.5
+    uptime_percentage: Optional[float] = 99.95
 
     class Config:
         from_attributes = True
+
+class PublicStatusPageOut(BaseModel):
+    system_status: str # OPERATIONAL, DEGRADED, OUTAGE
+    overall_uptime: float # 99.98
+    total_monitors: int
+    up_monitors: int
+    updated_at: datetime
+    services: List[Dict[str, Any]]
 
 # --- Keepalived Cluster Schemas ---
 class ClusterCreate(BaseModel):
@@ -181,6 +190,16 @@ class ClusterCreate(BaseModel):
     slave_server_id: int
     interface: str = "eth0"
 
+class ClusterWizardRequest(BaseModel):
+    name: str
+    virtual_ip: str
+    router_id: int = 51
+    interface: str = "eth0"
+    master_server_id: int
+    backup_server_id: int
+    auth_pass: str = "UAProxyVRRP51"
+    check_script: str = "killall -0 haproxy"
+
 class ClusterOut(BaseModel):
     id: int
     name: str
@@ -190,6 +209,7 @@ class ClusterOut(BaseModel):
     slave_server_id: int
     interface: str
     state: str
+    active_node: Optional[str] = "MASTER"
     created_at: datetime
 
     class Config:
@@ -198,7 +218,7 @@ class ClusterOut(BaseModel):
 # --- Audit & Alerts ---
 class AlertChannelCreate(BaseModel):
     name: str
-    channel_type: str # telegram, slack, email
+    channel_type: str # telegram, slack, email, discord
     config_json: str
 
 class AuditLogOut(BaseModel):

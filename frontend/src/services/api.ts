@@ -155,7 +155,13 @@ export const api = {
     return res.data;
   },
 
-  // Clusters
+  // Public Status Page
+  getPublicStatusPage: async () => {
+    const res = await axios.get(`${API_BASE}/public/status-page`);
+    return res.data;
+  },
+
+  // Keepalived VRRP Clusters
   getClusters: async (): Promise<Cluster[]> => {
     const res = await axios.get(`${API_BASE}/clusters`);
     return res.data;
@@ -166,9 +172,34 @@ export const api = {
     return res.data;
   },
 
+  generateClusterConfigs: async (data: any) => {
+    const res = await axios.post(`${API_BASE}/clusters/wizard`, data);
+    return res.data;
+  },
+
+  deployCluster: async (clusterId: number) => {
+    const res = await axios.post(`${API_BASE}/clusters/${clusterId}/deploy`);
+    return res.data;
+  },
+
+  failoverClusterTest: async (clusterId: number) => {
+    const res = await axios.post(`${API_BASE}/clusters/${clusterId}/failover-test`);
+    return res.data;
+  },
+
   // Audits & Alerts
   getAuditLogs: async (): Promise<AuditLog[]> => {
     const res = await axios.get(`${API_BASE}/audit`);
+    return res.data;
+  },
+
+  getAlertChannels: async () => {
+    const res = await axios.get(`${API_BASE}/alerts/channels`);
+    return res.data;
+  },
+
+  createAlertChannel: async (data: { name: string; channel_type: string; config_json: string }) => {
+    const res = await axios.post(`${API_BASE}/alerts/channels`, data);
     return res.data;
   },
 

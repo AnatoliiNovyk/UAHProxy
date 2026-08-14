@@ -24,6 +24,7 @@ export const translations = {
     // Action buttons
     add_server: "Додати сервер",
     install_service: "Встановити сервіс",
+    add_target: "Додати Ціль (Монітор)",
     save_config: "Зберегти конфіг",
     validate_syntax: "Валідувати синтаксис",
     compare_diff: "Порівняти версії",
@@ -71,6 +72,7 @@ export const translations = {
     // Action buttons
     add_server: "Add Server",
     install_service: "Install Service",
+    add_target: "Add Target (Monitor)",
     save_config: "Save Config",
     validate_syntax: "Validate Syntax",
     compare_diff: "Compare Versions",

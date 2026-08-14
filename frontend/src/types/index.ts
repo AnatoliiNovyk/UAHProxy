@@ -48,6 +48,7 @@ export interface SmonTarget {
   created_at: string;
   latest_status?: string;
   latest_response_time?: number;
+  uptime_percentage?: number;
 }
 
 export interface Cluster {
@@ -59,6 +60,7 @@ export interface Cluster {
   slave_server_id: number;
   interface: string;
   state: string;
+  active_node?: string;
   created_at: string;
 }
 

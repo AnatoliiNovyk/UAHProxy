@@ -11,6 +11,7 @@ import { ClustersView } from './views/ClustersView';
 import { SslWafView } from './views/SslWafView';
 import { AlertsAuditView } from './views/AlertsAuditView';
 import { SettingsView } from './views/SettingsView';
+import { PublicStatusPageView } from './views/PublicStatusPageView';
 
 import { Language } from './i18n/translations';
 import { Server, SmonTarget, Cluster, AuditLog, LiveMetrics } from './types';
@@ -30,7 +31,6 @@ export const App: React.FC = () => {
   useEffect(() => {
     fetchInitialData();
 
-    // Subscribe to WebSockets live streaming feed
     const cleanupWs = connectWebSocket((liveMetrics) => {
       setMetrics(liveMetrics);
     });
@@ -54,6 +54,11 @@ export const App: React.FC = () => {
       console.error('Error loading UAProxy initial data', e);
     }
   };
+
+  // If user opens public status view directly
+  if (currentTab === 'public_status') {
+    return <PublicStatusPageView onBackToDashboard={() => setCurrentTab('smon')} />;
+  }
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -114,15 +119,13 @@ export const App: React.FC = () => {
           {currentTab === 'smon' && (
             <SmonView
               lang={lang}
-              smonTargets={smonTargets}
-              onRefresh={fetchInitialData}
+              onOpenPublicStatus={() => setCurrentTab('public_status')}
             />
           )}
 
           {currentTab === 'clusters' && (
             <ClustersView
               lang={lang}
-              clusters={clusters}
               servers={servers}
             />
           )}
@@ -134,7 +137,6 @@ export const App: React.FC = () => {
           {currentTab === 'alerts' && (
             <AlertsAuditView
               lang={lang}
-              auditLogs={auditLogs}
             />
           )}
 
