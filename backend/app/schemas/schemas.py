@@ -71,6 +71,9 @@ class ServerOut(BaseModel):
     has_apache: bool
     has_keepalived: bool
     has_exporter: bool
+    ssh_status: Optional[str] = "UNCHECKED"
+    ssh_error_message: Optional[str] = None
+    last_tested_at: Optional[datetime] = None
     group_id: Optional[int] = None
     created_at: datetime
 

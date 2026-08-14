@@ -59,6 +59,10 @@ class Server(Base):
     has_keepalived = Column(Boolean, default=False)
     has_exporter = Column(Boolean, default=False)
 
+    ssh_status = Column(String(32), default="UNCHECKED") # ONLINE, OFFLINE, UNCHECKED
+    ssh_error_message = Column(Text, nullable=True)
+    last_tested_at = Column(DateTime, nullable=True)
+
     group_id = Column(Integer, ForeignKey("server_groups.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

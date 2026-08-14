@@ -122,11 +122,17 @@ async def add_server(req: ServerCreate, db: AsyncSession = Depends(get_db)):
         has_keepalived=req.has_keepalived,
         group_id=req.group_id
     )
+    # Test SSH connection immediately upon creation
+    code, stdout, stderr = await SSHService.execute_command(server, "uptime")
+    server.ssh_status = "ONLINE" if code == 0 else "OFFLINE"
+    server.ssh_error_message = None if code == 0 else (stderr.strip() or stdout.strip() or "Connection failed")
+    server.last_tested_at = datetime.utcnow()
+
     db.add(server)
     await db.commit()
     await db.refresh(server)
 
-    audit = AuditLog(username="admin", action="ADD_SERVER", resource_type="Server", resource_id=str(server.id), details=f"Added server {server.hostname} ({server.ip_address})")
+    audit = AuditLog(username="admin", action="ADD_SERVER", resource_type="Server", resource_id=str(server.id), details=f"Added server {server.hostname} ({server.ip_address}) - Status: {server.ssh_status}")
     db.add(audit)
     await db.commit()
 
@@ -140,7 +146,19 @@ async def test_ssh_connection(server_id: int, db: AsyncSession = Depends(get_db)
         raise HTTPException(status_code=404, detail="Server not found")
     
     code, stdout, stderr = await SSHService.execute_command(server, "uptime")
-    return {"success": code == 0, "output": stdout.strip(), "error": stderr.strip()}
+    server.ssh_status = "ONLINE" if code == 0 else "OFFLINE"
+    server.ssh_error_message = None if code == 0 else (stderr.strip() or stdout.strip() or "Connection failed")
+    server.last_tested_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(server)
+
+    return {
+        "success": code == 0,
+        "output": stdout.strip(),
+        "error": stderr.strip(),
+        "ssh_status": server.ssh_status,
+        "ssh_error_message": server.ssh_error_message
+    }
 
 # --- Services Installer ---
 @router.post("/servers/{server_id}/install-service")

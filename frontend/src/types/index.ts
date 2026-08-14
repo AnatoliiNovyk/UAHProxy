@@ -11,6 +11,9 @@ export interface Server {
   has_apache: boolean;
   has_keepalived: boolean;
   has_exporter: boolean;
+  ssh_status?: string;
+  ssh_error_message?: string;
+  last_tested_at?: string;
   created_at: string;
 }
 
