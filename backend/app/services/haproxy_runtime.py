@@ -1,161 +1,196 @@
+import logging
+import csv
+import io
 from typing import List, Dict, Any, Optional
 from app.models.models import Server
 from app.services.ssh_service import SSHService
 
+logger = logging.getLogger("uaproxy.runtime")
+
 class HAProxyRuntimeService:
     @staticmethod
-    async def get_stats(server: Server, socket_path: str = "/var/run/haproxy.sock") -> List[Dict[str, Any]]:
-        """Queries HAProxy runtime socket for active stats"""
-        cmd = f"echo 'show stat' | socat stdio unix-connect:{socket_path}"
-        status, stdout, stderr = await SSHService.execute_command(server, cmd)
-        
-        parsed_stats = []
-        if status == 0 and "pxname" in stdout:
-            lines = stdout.strip().split("\n")
-            headers = [h.strip("# ") for h in lines[0].split(",")]
-            for line in lines[1:]:
-                if line:
-                    values = line.split(",")
-                    row = dict(zip(headers, values))
-                    parsed_stats.append({
-                        "pxname": row.get("pxname"),
-                        "svname": row.get("svname"),
-                        "status": row.get("status"),
-                        "weight": row.get("weight"),
-                        "scur": row.get("scur"),
-                        "smax": row.get("smax"),
-                        "slim": row.get("slim"),
-                    })
-        else:
-            parsed_stats = [
-                {"pxname": "web_frontend", "svname": "FRONTEND", "status": "OPEN", "weight": "-", "scur": "142", "smax": "450", "slim": "2000"},
-                {"pxname": "app_backend", "svname": "web-node-01", "status": "UP", "weight": "100", "scur": "45", "smax": "120", "slim": "500"},
-                {"pxname": "app_backend", "svname": "web-node-02", "status": "UP", "weight": "100", "scur": "48", "smax": "115", "slim": "500"},
-                {"pxname": "app_backend", "svname": "web-node-03", "status": "DRAIN", "weight": "0", "scur": "2", "smax": "90", "slim": "500"},
-                {"pxname": "api_backend", "svname": "api-node-01", "status": "UP", "weight": "150", "scur": "23", "smax": "80", "slim": "400"},
-                {"pxname": "api_backend", "svname": "api-node-02", "status": "MAINT", "weight": "0", "scur": "0", "smax": "75", "slim": "400"},
-            ]
-        return parsed_stats
+    async def _send_socket_command(server: Server, command: str, socket_path: str = "/var/run/haproxy.sock") -> str:
+        """Sends raw command to HAProxy UNIX Runtime Socket via socat"""
+        cmd = f"echo '{command}' | socat stdio unix-connect:{socket_path}"
+        code, stdout, stderr = await SSHService.execute_command(server, cmd)
+        if code != 0:
+            logger.warning(f"Runtime socket command '{command}' failed on {server.hostname}: {stderr}")
+            return ""
+        return stdout
 
     @staticmethod
-    async def execute_action(
-        server: Server,
-        backend_name: str,
-        server_name: str,
-        action: str, # ready, drain, maintain, set_weight
-        weight: int = 100,
-        socket_path: str = "/var/run/haproxy.sock"
-    ) -> Dict[str, Any]:
-        """Executes dynamic state change on HAProxy backend server"""
-        if action == "ready":
-            sock_cmd = f"enable server {backend_name}/{server_name}"
-        elif action == "drain":
-            sock_cmd = f"experimental-mode on; set server {backend_name}/{server_name} state drain"
-        elif action == "maintain":
-            sock_cmd = f"disable server {backend_name}/{server_name}"
-        elif action == "set_weight":
-            sock_cmd = f"set server {backend_name}/{server_name} weight {weight}"
-        else:
-            return {"success": False, "message": f"Unknown action: {action}"}
+    async def get_stats(server: Server) -> List[Dict[str, Any]]:
+        """Queries real 'show stat' from HAProxy socket and parses CSV output"""
+        raw_csv = await HAProxyRuntimeService._send_socket_command(server, "show stat")
+        if not raw_csv or not raw_csv.startswith("#"):
+            return []
 
-        full_cmd = f"echo '{sock_cmd}' | socat stdio unix-connect:{socket_path}"
-        status, stdout, stderr = await SSHService.execute_command(server, full_cmd)
-        
+        # Remove leading '#' from header
+        cleaned_csv = raw_csv.lstrip("# ")
+        reader = csv.DictReader(io.StringIO(cleaned_csv))
+        stats = []
+
+        for row in reader:
+            pxname = row.get("pxname")
+            svname = row.get("svname")
+            if not pxname or not svname:
+                continue
+
+            status = row.get("status", "UNKNOWN")
+            weight = int(row.get("weight", 0)) if row.get("weight", "").isdigit() else 0
+            scur = int(row.get("scur", 0)) if row.get("scur", "").isdigit() else 0
+            smax = int(row.get("smax", 0)) if row.get("smax", "").isdigit() else 0
+            rate = int(row.get("rate", 0)) if row.get("rate", "").isdigit() else 0
+            hrsp_2xx = int(row.get("hrsp_2xx", 0)) if row.get("hrsp_2xx", "").isdigit() else 0
+            hrsp_4xx = int(row.get("hrsp_4xx", 0)) if row.get("hrsp_4xx", "").isdigit() else 0
+            hrsp_5xx = int(row.get("hrsp_5xx", 0)) if row.get("hrsp_5xx", "").isdigit() else 0
+
+            stats.append({
+                "pxname": pxname,
+                "svname": svname,
+                "status": status,
+                "weight": weight,
+                "scur": scur,
+                "smax": smax,
+                "rate": rate,
+                "hrsp_2xx": hrsp_2xx,
+                "hrsp_4xx": hrsp_4xx,
+                "hrsp_5xx": hrsp_5xx
+            })
+
+        return stats
+
+    @staticmethod
+    async def execute_action(server: Server, backend_name: str, server_name: str, action: str, weight: Optional[int] = 100) -> Dict[str, Any]:
+        """
+        Executes real dynamic runtime action on backend server:
+        - ready: 'enable server <bk>/<sv>'
+        - drain: 'set server <bk>/<sv> state drain'
+        - maintain: 'disable server <bk>/<sv>'
+        - set_weight: 'set server <bk>/<sv> weight <w>'
+        """
+        if action == "ready":
+            cmd = f"enable server {backend_name}/{server_name}"
+        elif action == "drain":
+            cmd = f"set server {backend_name}/{server_name} state drain"
+        elif action == "maintain":
+            cmd = f"disable server {backend_name}/{server_name}"
+        elif action == "set_weight":
+            cmd = f"set server {backend_name}/{server_name} weight {weight}"
+        else:
+            return {"success": False, "error": f"Invalid action: {action}"}
+
+        out = await HAProxyRuntimeService._send_socket_command(server, cmd)
         return {
             "success": True,
             "action": action,
-            "target": f"{backend_name}/{server_name}",
-            "raw_output": stdout or f"HAProxy runtime command '{sock_cmd}' applied successfully."
+            "backend": backend_name,
+            "server": server_name,
+            "weight": weight,
+            "response": out.strip() or "OK"
         }
 
     @staticmethod
-    async def get_stick_tables(server: Server, socket_path: str = "/var/run/haproxy.sock") -> List[Dict[str, Any]]:
-        """Queries stick-table sessions and tracked client IPs"""
-        cmd = f"echo 'show table' | socat stdio unix-connect:{socket_path}"
-        status, stdout, stderr = await SSHService.execute_command(server, cmd)
-        
-        # Sample response parser
-        tables = [
-            {
-                "table_name": "http_rate_limit",
-                "type": "ip",
-                "size": 1048576,
-                "used": 42,
-                "entries": [
-                    {"key": "192.168.1.50", "use": 0, "exp": "298s", "http_req_rate(10s)": 14, "gpc0": 0},
-                    {"key": "203.0.113.19", "use": 0, "exp": "145s", "http_req_rate(10s)": 280, "gpc0": 1},
-                    {"key": "198.51.100.82", "use": 0, "exp": "420s", "http_req_rate(10s)": 4, "gpc0": 0},
-                ]
-            }
-        ]
+    async def get_stick_tables(server: Server) -> List[Dict[str, Any]]:
+        """Queries real stick tables from HAProxy runtime socket via 'show table'"""
+        raw_tables = await HAProxyRuntimeService._send_socket_command(server, "show table")
+        if not raw_tables:
+            return []
+
+        tables = []
+        for line in raw_tables.splitlines():
+            line = line.strip()
+            if line.startswith("# table:"):
+                # Parse: # table: http_rate_limit, type: ip, size: 1048576, used: 12
+                parts = line.split(",")
+                tbl_info: Dict[str, Any] = {"entries": []}
+                for p in parts:
+                    if ":" in p:
+                        k, v = p.split(":", 1)
+                        tbl_info[k.strip().replace("# ", "")] = v.strip()
+
+                table_name = tbl_info.get("table", "")
+                if table_name:
+                    entries_out = await HAProxyRuntimeService._send_socket_command(server, f"show table {table_name}")
+                    entries = []
+                    for e_line in entries_out.splitlines():
+                        if e_line.startswith("0x"): # pointer key values
+                            e_parts = e_line.split(":")
+                            if len(e_parts) >= 2:
+                                entries.append({
+                                    "key": e_parts[0].strip().split()[-1],
+                                    "stats": e_parts[1].strip()
+                                })
+                    tbl_info["entries"] = entries
+
+                tables.append(tbl_info)
+
         return tables
 
     @staticmethod
-    async def clear_stick_table_key(server: Server, table_name: str, key: str, socket_path: str = "/var/run/haproxy.sock") -> Dict[str, Any]:
-        """Clears client session tracking key from stick-table"""
-        cmd = f"echo 'clear table {table_name} key {key}' | socat stdio unix-connect:{socket_path}"
-        status, stdout, stderr = await SSHService.execute_command(server, cmd)
-        return {"success": True, "table": table_name, "key": key, "output": stdout or f"Key {key} cleared from {table_name}"}
+    async def clear_stick_table_key(server: Server, table_name: str, key: str) -> Dict[str, Any]:
+        """Clears specific key or whole table from stick-table"""
+        cmd = f"clear table {table_name} key {key}" if key != "all" else f"clear table {table_name}"
+        out = await HAProxyRuntimeService._send_socket_command(server, cmd)
+        return {"success": True, "table": table_name, "key": key, "response": out.strip() or "Cleared"}
 
     @staticmethod
-    async def get_maps(server: Server, socket_path: str = "/var/run/haproxy.sock") -> List[Dict[str, Any]]:
-        """Queries dynamic IP maps (Whitelist / Blacklist)"""
-        return [
-            {
-                "map_id": 1,
-                "name": "ip_blacklist.map",
-                "description": "Dynamic IP blocklist (403 Forbidden)",
-                "entries": [
-                    {"key": "203.0.113.19", "value": "block_syn_flood", "added_at": "2026-08-14 09:12:00"},
-                    {"key": "198.51.100.4", "value": "malicious_crawler", "added_at": "2026-08-14 10:05:00"},
-                ]
-            },
-            {
-                "map_id": 2,
-                "name": "ip_whitelist.map",
-                "description": "Whitelisted IPs for Admin & Internal APIs",
-                "entries": [
-                    {"key": "192.168.1.0/24", "value": "internal_lan", "added_at": "2026-08-10 12:00:00"},
-                    {"key": "10.8.0.0/16", "value": "vpn_pool", "added_at": "2026-08-10 12:00:00"},
-                ]
-            }
-        ]
+    async def get_maps(server: Server) -> List[Dict[str, Any]]:
+        """Lists real loaded HAProxy maps from runtime socket via 'show map'"""
+        raw_maps = await HAProxyRuntimeService._send_socket_command(server, "show map")
+        if not raw_maps:
+            return []
+
+        maps = []
+        for line in raw_maps.splitlines():
+            line = line.strip()
+            if line.startswith("# id:"):
+                # # id: 0, desc: /etc/haproxy/maps/hosts.map, entries: 5
+                parts = line.split(",")
+                m_info: Dict[str, Any] = {"entries": []}
+                for p in parts:
+                    if ":" in p:
+                        k, v = p.split(":", 1)
+                        m_info[k.strip().replace("# ", "")] = v.strip()
+
+                map_id = m_info.get("id", "")
+                if map_id:
+                    entries_out = await HAProxyRuntimeService._send_socket_command(server, f"show map #{map_id}")
+                    entries = []
+                    for e_line in entries_out.splitlines():
+                        if " " in e_line and not e_line.startswith("#"):
+                            k, v = e_line.strip().split(None, 1)
+                            entries.append({"key": k, "value": v})
+                    m_info["entries"] = entries
+
+                maps.append(m_info)
+
+        return maps
 
     @staticmethod
-    async def update_map_entry(
-        server: Server,
-        map_name: str,
-        key: str,
-        value: str,
-        action: str = "add", # "add", "del"
-        socket_path: str = "/var/run/haproxy.sock"
-    ) -> Dict[str, Any]:
-        """Dynamically adds or removes an IP entry in a runtime map"""
+    async def update_map_entry(server: Server, map_name: str, key: str, value: str, action: str = "add") -> Dict[str, Any]:
+        """Adds, updates, or deletes real key-value entries in runtime map"""
         if action == "add":
-            sock_cmd = f"add map {map_name} {key} {value}"
+            cmd = f"add map {map_name} {key} {value}"
+        elif action == "set":
+            cmd = f"set map {map_name} {key} {value}"
         elif action == "del":
-            sock_cmd = f"del map {map_name} {key}"
+            cmd = f"del map {map_name} {key}"
         else:
-            return {"success": False, "message": f"Unknown action: {action}"}
+            return {"success": False, "error": f"Invalid map action: {action}"}
 
-        full_cmd = f"echo '{sock_cmd}' | socat stdio unix-connect:{socket_path}"
-        status, stdout, stderr = await SSHService.execute_command(server, full_cmd)
-        return {"success": True, "action": action, "map": map_name, "key": key, "output": stdout or f"Map {map_name} updated successfully."}
+        out = await HAProxyRuntimeService._send_socket_command(server, cmd)
+        return {"success": True, "map": map_name, "key": key, "value": value, "response": out.strip() or "Updated"}
 
     @staticmethod
-    async def set_maxconn(
-        server: Server,
-        target_type: str, # "global", "frontend"
-        target_name: Optional[str],
-        maxconn: int,
-        socket_path: str = "/var/run/haproxy.sock"
-    ) -> Dict[str, Any]:
-        """Dynamically tunes maxconn on the fly"""
+    async def set_maxconn(server: Server, target_type: str, target_name: Optional[str], maxconn: int) -> Dict[str, Any]:
+        """Sets maxconn dynamically on global or frontend level"""
         if target_type == "global":
-            sock_cmd = f"set maxconn global {maxconn}"
+            cmd = f"set maxconn global {maxconn}"
+        elif target_type == "frontend" and target_name:
+            cmd = f"set maxconn frontend {target_name} {maxconn}"
         else:
-            sock_cmd = f"set maxconn frontend {target_name} {maxconn}"
+            return {"success": False, "error": "Invalid target type for maxconn"}
 
-        full_cmd = f"echo '{sock_cmd}' | socat stdio unix-connect:{socket_path}"
-        status, stdout, stderr = await SSHService.execute_command(server, full_cmd)
-        return {"success": True, "target": target_name or "global", "maxconn": maxconn, "output": stdout or f"Maxconn set to {maxconn}"}
+        out = await HAProxyRuntimeService._send_socket_command(server, cmd)
+        return {"success": True, "target": target_type, "name": target_name, "maxconn": maxconn, "response": out.strip() or "Applied"}

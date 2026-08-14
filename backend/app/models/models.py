@@ -58,28 +58,27 @@ class Server(Base):
     has_apache = Column(Boolean, default=False)
     has_keepalived = Column(Boolean, default=False)
     has_exporter = Column(Boolean, default=False)
-    
+
     group_id = Column(Integer, ForeignKey("server_groups.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     group = relationship("ServerGroup", back_populates="servers")
-    services = relationship("ServiceStatus", back_populates="server", cascade="all, delete-orphan")
     configs = relationship("ConfigHistory", back_populates="server", cascade="all, delete-orphan")
+    statuses = relationship("ServiceStatus", back_populates="server", cascade="all, delete-orphan")
 
 class ServiceStatus(Base):
     __tablename__ = "service_statuses"
 
     id = Column(Integer, primary_key=True, index=True)
     server_id = Column(Integer, ForeignKey("servers.id"), nullable=False)
-    service_name = Column(SQLEnum(ServiceTypeEnum), nullable=False)
-    is_running = Column(Boolean, default=False)
-    is_enabled = Column(Boolean, default=True)
-    uptime = Column(String(64), nullable=True)
-    version = Column(String(64), nullable=True)
+    service_type = Column(SQLEnum(ServiceTypeEnum), nullable=False)
+    is_active = Column(Boolean, default=False)
+    pid = Column(Integer, nullable=True)
+    uptime_seconds = Column(Integer, default=0)
     last_checked = Column(DateTime, default=datetime.utcnow)
 
-    server = relationship("Server", back_populates="services")
+    server = relationship("Server", back_populates="statuses")
 
 class ConfigHistory(Base):
     __tablename__ = "config_histories"
@@ -89,11 +88,10 @@ class ConfigHistory(Base):
     service_type = Column(SQLEnum(ServiceTypeEnum), nullable=False)
     content = Column(Text, nullable=False)
     config_hash = Column(String(64), nullable=False)
-    version_number = Column(Integer, nullable=False, default=1)
+    version_number = Column(Integer, default=1)
     commit_message = Column(String(255), nullable=True)
     git_synced = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
-    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     server = relationship("Server", back_populates="configs")
 
@@ -105,7 +103,7 @@ class SmonTarget(Base):
     target_type = Column(String(32), default="http") # http, ping, tcp, ssl
     host_or_url = Column(String(255), nullable=False)
     port = Column(Integer, nullable=True)
-    check_interval = Column(Integer, default=30) # seconds
+    check_interval = Column(Integer, default=30) # in seconds
     expected_status_code = Column(Integer, default=200)
     ssl_warn_days = Column(Integer, default=14)
     is_active = Column(Boolean, default=True)
@@ -162,3 +160,18 @@ class AlertChannel(Base):
     config_json = Column(Text, nullable=False) # JSON encoded API keys / Webhooks
     is_enabled = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class WafEvent(Base):
+    __tablename__ = "waf_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    server_id = Column(Integer, ForeignKey("servers.id"), nullable=True)
+    client_ip = Column(String(64), nullable=False)
+    country = Column(String(10), default="UA")
+    request_uri = Column(Text, nullable=False)
+    rule_id = Column(String(32), nullable=False)
+    rule_name = Column(String(128), nullable=False)
+    severity = Column(String(32), default="CRITICAL") # CRITICAL, HIGH, MEDIUM, LOW
+    action = Column(String(32), default="BLOCKED (403)")
+    matched_var = Column(String(128), nullable=True)
+    timestamp = Column(DateTime, default=datetime.utcnow)

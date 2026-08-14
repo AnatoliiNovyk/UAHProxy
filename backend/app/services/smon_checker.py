@@ -1,86 +1,116 @@
-import httpx
+import asyncio
 import time
 import socket
 import ssl
 import subprocess
-import re
-from datetime import datetime
+import httpx
+import logging
+from datetime import datetime, timezone
+from cryptography import x509
+from cryptography.hazmat.backends import default_backend
 from typing import Dict, Any
 from app.models.models import SmonTarget
+
+logger = logging.getLogger("uaproxy.smon")
 
 class SmonCheckerService:
     @staticmethod
     async def check_target(target: SmonTarget) -> Dict[str, Any]:
-        """Runs synthetic check for target (HTTP/SSL/TCP/Ping)"""
+        """
+        Executes genuine synthetic health-checks:
+        - http / https: Real HTTP GET request & response time measurement
+        - tcp: Real TCP socket handshake
+        - ping: Real ICMP echo request
+        - ssl: Real TLS handshake and X.509 certificate expiry extraction
+        """
         start_time = time.time()
-        status = "UNKNOWN"
+        status = "DOWN"
         details = ""
-        days_left = None
+        response_time_ms = 0.0
 
         try:
-            if target.target_type in ["http", "https"]:
-                url = target.host_or_url
-                if not url.startswith("http"):
-                    url = f"http://{url}"
-                
-                async with httpx.AsyncClient(timeout=5.0, verify=False) as client:
-                    resp = await client.get(url)
-                    expected_code = target.expected_status_code or 200
-                    
-                    if resp.status_code == expected_code:
+            if target.target_type == "http":
+                async with httpx.AsyncClient(verify=False, timeout=5.0) as client:
+                    resp = await client.get(target.host_or_url)
+                    response_time_ms = round((time.time() - start_time) * 1000, 2)
+                    if resp.status_code == target.expected_status_code:
                         status = "UP"
-                        details = f"HTTP {resp.status_code} OK ({len(resp.text)} bytes)"
+                        details = f"HTTP {resp.status_code} OK ({response_time_ms} ms)"
                     else:
-                        status = "DOWN"
-                        details = f"Expected {expected_code}, got HTTP {resp.status_code}"
+                        status = "WARNING"
+                        details = f"HTTP {resp.status_code} (Expected {target.expected_status_code})"
+
+            elif target.target_type == "tcp":
+                host = target.host_or_url
+                port = target.port or 80
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(3.0)
+                try:
+                    s.connect((host, port))
+                    response_time_ms = round((time.time() - start_time) * 1000, 2)
+                    status = "UP"
+                    details = f"TCP Port {port} Connected ({response_time_ms} ms)"
+                finally:
+                    s.close()
 
             elif target.target_type == "ssl":
-                hostname = target.host_or_url.replace("https://", "").replace("http://", "").split("/")[0].split(":")[0]
+                host = target.host_or_url.replace("https://", "").replace("http://", "").split("/")[0].split(":")[0]
                 port = target.port or 443
-                
                 ctx = ssl.create_default_context()
                 ctx.check_hostname = False
                 ctx.verify_mode = ssl.CERT_NONE
 
-                with socket.create_connection((hostname, port), timeout=4.0) as sock:
-                    with ctx.wrap_socket(sock, server_hostname=hostname) as ssock:
-                        cert = ssock.getpeercert(binary_form=False)
-                        # Estimate remaining validity (simulated 45-90 days for demo if binary_form=False)
-                        days_left = 68
-                        status = "UP" if days_left > (target.ssl_warn_days or 14) else "WARNING"
-                        details = f"SSL Valid: {days_left} days remaining"
+                with socket.create_connection((host, port), timeout=3.0) as sock:
+                    with ctx.wrap_socket(sock, server_hostname=host) as ssock:
+                        der_cert = ssock.getpeercert(binary_form=True)
+                        response_time_ms = round((time.time() - start_time) * 1000, 2)
+                        
+                        if der_cert:
+                            cert = x509.load_der_x509_certificate(der_cert, default_backend())
+                            expire_dt = cert.not_valid_after_utc
+                            days_left = (expire_dt - datetime.now(timezone.utc)).days
 
-            elif target.target_type == "tcp":
-                host = target.host_or_url.split(":")[0]
-                port = target.port or 80
-                with socket.create_connection((host, port), timeout=3.0):
-                    status = "UP"
-                    details = f"TCP port {port} open"
+                            if days_left <= 0:
+                                status = "DOWN"
+                                details = f"SSL Expired on {expire_dt.strftime('%Y-%m-%d')}"
+                            elif days_left <= target.ssl_warn_days:
+                                status = "WARNING"
+                                details = f"SSL Expiring in {days_left} days ({expire_dt.strftime('%Y-%m-%d')})"
+                            else:
+                                status = "UP"
+                                details = f"SSL Valid: {days_left} days remaining ({expire_dt.strftime('%Y-%m-%d')})"
+                        else:
+                            status = "WARNING"
+                            details = "TLS Handshake successful (No peer certificate presented)"
 
             elif target.target_type == "ping":
-                host = target.host_or_url.replace("http://", "").replace("https://", "").split("/")[0]
-                res = subprocess.run(["ping", "-c", "1", "-W", "2", host], capture_output=True)
-                if res.returncode == 0:
+                host = target.host_or_url
+                cmd = ["ping", "-c", "1", "-W", "2", host]
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, _ = await proc.communicate()
+                response_time_ms = round((time.time() - start_time) * 1000, 2)
+
+                if proc.returncode == 0:
                     status = "UP"
-                    details = "ICMP Echo Reply OK"
+                    details = f"ICMP Echo Reply ({response_time_ms} ms)"
                 else:
                     status = "DOWN"
-                    details = "ICMP Ping Timeout"
+                    details = "Host Unreachable / Packet Lost"
 
         except Exception as e:
             status = "DOWN"
-            details = f"Error: {str(e)}"
-
-        elapsed_ms = round((time.time() - start_time) * 1000, 2)
-        if elapsed_ms < 1.0:
-            elapsed_ms = 18.4  # realistic baseline for simulated/local checks
+            response_time_ms = round((time.time() - start_time) * 1000, 2)
+            details = f"Probe Error: {str(e)}"
 
         return {
             "target_id": target.id,
             "name": target.name,
+            "target_type": target.target_type,
             "status": status,
-            "response_time_ms": elapsed_ms,
-            "details": details,
-            "days_left": days_left,
-            "checked_at": datetime.utcnow().isoformat()
+            "response_time_ms": response_time_ms,
+            "details": details
         }

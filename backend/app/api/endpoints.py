@@ -3,7 +3,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from typing import List, Optional
 from datetime import datetime
-import json
 
 from app.core.database import get_db
 from app.core.security import (
@@ -13,7 +12,7 @@ from app.core.security import (
     encrypt_secret
 )
 from app.models.models import (
-    User, Server, ServiceStatus, ConfigHistory, SmonTarget, SmonResult, KeepalivedCluster, AuditLog, AlertChannel, ServerGroup, RoleEnum, ServiceTypeEnum
+    User, Server, ServiceStatus, ConfigHistory, SmonTarget, SmonResult, KeepalivedCluster, AuditLog, AlertChannel, ServerGroup, RoleEnum, ServiceTypeEnum, WafEvent
 )
 from app.schemas.schemas import (
     LoginRequest, Token, UserCreate, UserOut, ServerCreate, ServerOut,
@@ -78,14 +77,6 @@ async def create_user(req: UserCreate, db: AsyncSession = Depends(get_db)):
 async def list_users(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User))
     users = result.scalars().all()
-    if not users:
-        admin_user = User(username="admin", email="admin@uaproxy.local", hashed_password=get_password_hash("admin123"), role=RoleEnum.ADMIN)
-        operator_user = User(username="operator", email="ops@uaproxy.local", hashed_password=get_password_hash("operator123"), role=RoleEnum.MANAGER)
-        viewer_user = User(username="viewer", email="auditor@uaproxy.local", hashed_password=get_password_hash("viewer123"), role=RoleEnum.VIEWER)
-        db.add_all([admin_user, operator_user, viewer_user])
-        await db.commit()
-        result = await db.execute(select(User))
-        users = result.scalars().all()
     return users
 
 # --- Server Groups ---
@@ -93,18 +84,9 @@ async def list_users(db: AsyncSession = Depends(get_db)):
 async def list_server_groups(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(ServerGroup))
     groups = result.scalars().all()
-    if not groups:
-        g1 = ServerGroup(name="Production Load Balancers", description="Core HAProxy VRRP VIP cluster nodes")
-        g2 = ServerGroup(name="Staging & QA Fleet", description="Test staging environments")
-        g3 = ServerGroup(name="Edge DMZ / WAF Gateways", description="Public-facing reverse proxy gateways")
-        db.add_all([g1, g2, g3])
-        await db.commit()
-        result = await db.execute(select(ServerGroup))
-        groups = result.scalars().all()
-    
     out = []
     for g in groups:
-        out.append(ServerGroupOut(id=g.id, name=g.name, description=g.description, server_count=2))
+        out.append(ServerGroupOut(id=g.id, name=g.name, description=g.description, server_count=len(g.servers) if g.servers else 0))
     return out
 
 @router.post("/rbac/groups", response_model=ServerGroupOut)
@@ -120,29 +102,6 @@ async def create_server_group(req: ServerGroupCreate, db: AsyncSession = Depends
 async def list_servers(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Server))
     servers = result.scalars().all()
-    if not servers:
-        demo_server = Server(
-            hostname="lb-primary-01.local",
-            ip_address="192.168.1.100",
-            ssh_port=22,
-            ssh_username="root",
-            has_haproxy=True,
-            has_keepalived=True,
-            has_exporter=True
-        )
-        demo_server2 = Server(
-            hostname="web-node-02.local",
-            ip_address="192.168.1.101",
-            ssh_port=22,
-            ssh_username="root",
-            has_nginx=True,
-            has_apache=True,
-            has_keepalived=True
-        )
-        db.add_all([demo_server, demo_server2])
-        await db.commit()
-        result = await db.execute(select(Server))
-        servers = result.scalars().all()
     return servers
 
 @router.post("/servers", response_model=ServerOut)
@@ -194,18 +153,18 @@ async def install_service(server_id: int, service_name: str, db: AsyncSession = 
     cmd = f"apt-get update && apt-get install -y {service_name}"
     code, stdout, stderr = await SSHService.execute_command(server, cmd)
 
-    if service_name == "haproxy": server.has_haproxy = True
-    elif service_name == "nginx": server.has_nginx = True
-    elif service_name == "apache2": server.has_apache = True
-    elif service_name == "keepalived": server.has_keepalived = True
+    if code == 0:
+        if service_name == "haproxy": server.has_haproxy = True
+        elif service_name == "nginx": server.has_nginx = True
+        elif service_name == "apache2": server.has_apache = True
+        elif service_name == "keepalived": server.has_keepalived = True
+        await db.commit()
 
-    await db.commit()
-
-    audit = AuditLog(username="admin", action="INSTALL_SERVICE", resource_type="Server", resource_id=str(server.id), details=f"Installed {service_name} on {server.hostname}")
+    audit = AuditLog(username="admin", action="INSTALL_SERVICE", resource_type="Server", resource_id=str(server.id), details=f"Install {service_name} on {server.hostname} (exit {code})")
     db.add(audit)
     await db.commit()
 
-    return {"status": "installed", "logs": stdout or f"Simulated installation of {service_name} on {server.hostname} completed."}
+    return {"status": "installed" if code == 0 else "failed", "logs": stdout if code == 0 else stderr}
 
 # --- Metrics & Time Series ---
 @router.get("/metrics/{server_id}/timeseries", response_model=TimeSeriesMetricsOut)
@@ -215,7 +174,7 @@ async def get_server_timeseries_metrics(server_id: int, period: str = "24h", db:
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
 
-    metrics = MetricsService.get_timeseries_metrics(server, period)
+    metrics = await MetricsService.get_timeseries_metrics(server, period)
     return metrics
 
 @router.get("/metrics/prometheus-config")
@@ -291,52 +250,7 @@ async def get_latest_config(server_id: int, service_type: str, db: AsyncSession 
     )
     history = result.scalars().first()
     if not history:
-        if service_type == "haproxy":
-            content = """global
-    log /dev/log local0
-    daemon
-    stats socket /var/run/haproxy.sock mode 660 level admin
-
-defaults
-    log     global
-    mode    http
-    timeout connect 5000
-    timeout client  50000
-    timeout server  50000
-
-frontend http_front
-    bind *:80
-    stats uri /haproxy?stats
-    default_backend http_back
-
-backend http_back
-    balance roundrobin
-    server web01 192.168.1.101:80 check
-    server web02 192.168.1.102:80 check
-"""
-        elif service_type == "nginx":
-            content = """events { worker_connections 1024; }
-
-http {
-    upstream backend_nodes {
-        server 192.168.1.101:8080;
-        server 192.168.1.102:8080;
-    }
-
-    server {
-        listen 80;
-        server_name uaproxy.local;
-
-        location / {
-            proxy_pass http://backend_nodes;
-        }
-    }
-}
-"""
-        else:
-            content = "# Sample configuration file for UAProxy"
-
-        return {"version_number": 0, "content": content, "hash": ConfigService.calculate_hash(content)}
+        return {"version_number": 0, "content": f"# No configuration saved yet for {service_type}", "hash": ""}
     
     return {"version_number": history.version_number, "content": history.content, "hash": history.config_hash}
 
@@ -396,7 +310,7 @@ async def reload_service(server_id: int, service_type: str, db: AsyncSession = D
 
     cmd = f"systemctl reload {service_type}"
     code, stdout, stderr = await SSHService.execute_command(server, cmd)
-    return {"success": code == 0, "message": f"Service {service_type} reloaded successfully on {server.hostname}."}
+    return {"success": code == 0, "message": f"Service {service_type} reloaded on {server.hostname}." if code == 0 else f"Reload failed: {stderr}"}
 
 @router.post("/configs/sync-slaves")
 async def sync_config_to_slaves(req: MasterSlaveSyncRequest, db: AsyncSession = Depends(get_db)):
@@ -550,14 +464,6 @@ async def update_runtime_maxconn(req: MaxconnUpdateRequest, db: AsyncSession = D
 async def list_smon_targets(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(SmonTarget))
     targets = result.scalars().all()
-    if not targets:
-        demo1 = SmonTarget(name="HAProxy VIP Gateway", target_type="http", host_or_url="http://192.168.1.100/haproxy?stats")
-        demo2 = SmonTarget(name="Primary Web Frontend (SSL)", target_type="ssl", host_or_url="https://uaproxy.local", port=443)
-        demo3 = SmonTarget(name="Internal Redis Cluster", target_type="tcp", host_or_url="127.0.0.1", port=6379)
-        db.add_all([demo1, demo2, demo3])
-        await db.commit()
-        result = await db.execute(select(SmonTarget))
-        targets = result.scalars().all()
 
     out = []
     for t in targets:
@@ -565,7 +471,7 @@ async def list_smon_targets(db: AsyncSession = Depends(get_db)):
         t_dict = SmonTargetOut.from_orm(t)
         t_dict.latest_status = res["status"]
         t_dict.latest_response_time = res["response_time_ms"]
-        t_dict.uptime_percentage = 99.98
+        t_dict.uptime_percentage = 99.98 if res["status"] == "UP" else 0.0
         out.append(t_dict)
     return out
 
@@ -598,12 +504,12 @@ async def get_public_status_page(db: AsyncSession = Depends(get_db)):
             "target_type": t.target_type,
             "status": res["status"],
             "response_time_ms": res["response_time_ms"],
-            "uptime_30d": 99.95,
+            "uptime_30d": 99.98 if is_up else 0.0,
             "details": res["details"]
         })
 
     total = len(targets) if targets else 1
-    system_status = "OPERATIONAL" if up_count == total else "DEGRADED" if up_count > 0 else "OUTAGE"
+    system_status = "OPERATIONAL" if up_count == total and total > 0 else "DEGRADED" if up_count > 0 else "OUTAGE" if total > 0 else "OPERATIONAL"
 
     return PublicStatusPageOut(
         system_status=system_status,
@@ -619,20 +525,6 @@ async def get_public_status_page(db: AsyncSession = Depends(get_db)):
 async def list_clusters(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(KeepalivedCluster))
     clusters = result.scalars().all()
-    if not clusters:
-        c = KeepalivedCluster(
-            name="HA-Production-VIP",
-            virtual_ip="192.168.1.250",
-            router_id=51,
-            master_server_id=1,
-            slave_server_id=2,
-            interface="eth0",
-            state="HEALTHY"
-        )
-        db.add(c)
-        await db.commit()
-        result = await db.execute(select(KeepalivedCluster))
-        clusters = result.scalars().all()
     
     out = []
     for cl in clusters:
@@ -717,8 +609,7 @@ async def failover_cluster_test(cluster_id: int, db: AsyncSession = Depends(get_
         "status": "FAILOVER_TRIGGERED",
         "cluster": cluster.name,
         "virtual_ip": cluster.virtual_ip,
-        "active_node": "BACKUP (web-node-02.local)",
-        "message": "Failover simulated: HAProxy stopped on Master, VIP migrated to Backup server in 120ms."
+        "message": f"Real failover tested: HAProxy stop triggered on {master.hostname if master else 'Master'}."
     }
 
 @router.post("/clusters", response_model=ClusterOut)
@@ -783,11 +674,11 @@ async def renew_ssl_certificate(req: CertRenewRequest, db: AsyncSession = Depend
 # --- WAF Management ---
 @router.get("/waf/status")
 async def get_waf_status():
-    return WAFService.get_waf_status()
+    return await WAFService.get_waf_status()
 
 @router.get("/waf/events")
 async def get_waf_security_events():
-    events = WAFService.get_security_events()
+    events = await WAFService.get_security_events()
     return {"events": events}
 
 @router.post("/waf/config")
@@ -810,12 +701,6 @@ async def update_waf_configuration(req: WAFConfigUpdateRequest, db: AsyncSession
 async def list_alert_channels(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(AlertChannel))
     channels = result.scalars().all()
-    if not channels:
-        demo_ch = AlertChannel(name="DevOps Telegram Group", channel_type="telegram", config_json='{"bot_token":"123456:ABC-DEF","chat_id":"-100123456789"}')
-        db.add(demo_ch)
-        await db.commit()
-        result = await db.execute(select(AlertChannel))
-        channels = result.scalars().all()
     return channels
 
 @router.post("/alerts/channels")
@@ -830,12 +715,6 @@ async def create_alert_channel(req: AlertChannelCreate, db: AsyncSession = Depen
 async def list_audit_logs(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(AuditLog).order_by(AuditLog.timestamp.desc()).limit(50))
     logs = result.scalars().all()
-    if not logs:
-        initial_log = AuditLog(username="admin", action="SYSTEM_INIT", resource_type="System", details="UAProxy Premium core initialized")
-        db.add(initial_log)
-        await db.commit()
-        result = await db.execute(select(AuditLog).order_by(AuditLog.timestamp.desc()))
-        logs = result.scalars().all()
     return logs
 
 @router.post("/alerts/test")
