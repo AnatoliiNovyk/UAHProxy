@@ -723,3 +723,71 @@ async def send_test_alert(channel_type: str, config_json: str):
         channel_type, config_json, "UAProxy Test Alert", "Test notification from UAProxy Premium Web Panel"
     )
     return {"success": res, "message": "Test alert sent successfully" if res else "Alert dispatch failed"}
+
+# --- Resource Deletion Endpoints ---
+@router.delete("/servers/{server_id}")
+async def delete_server(server_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Server).where(Server.id == server_id))
+    server = result.scalars().first()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+    
+    hostname = server.hostname
+    await db.delete(server)
+    
+    audit = AuditLog(username="admin", action="DELETE_SERVER", resource_type="Server", resource_id=str(server_id), details=f"Deleted server {hostname}")
+    db.add(audit)
+    await db.commit()
+    return {"success": True, "message": f"Server {hostname} deleted successfully"}
+
+@router.delete("/smon/targets/{target_id}")
+async def delete_smon_target(target_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(SmonTarget).where(SmonTarget.id == target_id))
+    target = result.scalars().first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Target not found")
+    
+    name = target.name
+    await db.delete(target)
+    await db.commit()
+    return {"success": True, "message": f"SMON Target {name} deleted"}
+
+@router.delete("/clusters/{cluster_id}")
+async def delete_cluster(cluster_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(KeepalivedCluster).where(KeepalivedCluster.id == cluster_id))
+    cluster = result.scalars().first()
+    if not cluster:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+    
+    name = cluster.name
+    await db.delete(cluster)
+    await db.commit()
+    return {"success": True, "message": f"Cluster {name} deleted"}
+
+@router.delete("/alerts/channels/{channel_id}")
+async def delete_alert_channel(channel_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(AlertChannel).where(AlertChannel.id == channel_id))
+    ch = result.scalars().first()
+    if not ch:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    
+    name = ch.name
+    await db.delete(ch)
+    await db.commit()
+    return {"success": True, "message": f"Alert channel {name} deleted"}
+
+@router.delete("/users/{user_id}")
+async def delete_user(user_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    if user.username == "admin":
+        raise HTTPException(status_code=400, detail="Cannot delete default admin superuser")
+    
+    username = user.username
+    await db.delete(user)
+    await db.commit()
+    return {"success": True, "message": f"User {username} deleted"}
+

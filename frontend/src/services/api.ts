@@ -51,6 +51,31 @@ export const api = {
     return res.data;
   },
 
+  deleteServer: async (serverId: number) => {
+    const res = await axios.delete(`${API_BASE}/servers/${serverId}`);
+    return res.data;
+  },
+
+  deleteUser: async (userId: number) => {
+    const res = await axios.delete(`${API_BASE}/users/${userId}`);
+    return res.data;
+  },
+
+  deleteSmonTarget: async (targetId: number) => {
+    const res = await axios.delete(`${API_BASE}/smon/targets/${targetId}`);
+    return res.data;
+  },
+
+  deleteCluster: async (clusterId: number) => {
+    const res = await axios.delete(`${API_BASE}/clusters/${clusterId}`);
+    return res.data;
+  },
+
+  deleteAlertChannel: async (channelId: number) => {
+    const res = await axios.delete(`${API_BASE}/alerts/channels/${channelId}`);
+    return res.data;
+  },
+
   // Metrics & Prometheus
   getTimeseriesMetrics: async (serverId: number, period: string = '24h') => {
     const res = await axios.get(`${API_BASE}/metrics/${serverId}/timeseries?period=${period}`);
