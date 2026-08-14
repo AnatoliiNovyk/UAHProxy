@@ -468,7 +468,7 @@ async def list_smon_targets(db: AsyncSession = Depends(get_db)):
     out = []
     for t in targets:
         res = await SmonCheckerService.check_target(t)
-        t_dict = SmonTargetOut.from_orm(t)
+        t_dict = SmonTargetOut.model_validate(t)
         t_dict.latest_status = res["status"]
         t_dict.latest_response_time = res["response_time_ms"]
         t_dict.uptime_percentage = 99.98 if res["status"] == "UP" else 0.0
@@ -477,7 +477,7 @@ async def list_smon_targets(db: AsyncSession = Depends(get_db)):
 
 @router.post("/smon/targets", response_model=SmonTargetOut)
 async def create_smon_target(req: SmonTargetCreate, db: AsyncSession = Depends(get_db)):
-    target = SmonTarget(**req.dict())
+    target = SmonTarget(**req.model_dump())
     db.add(target)
     await db.commit()
     await db.refresh(target)
@@ -528,7 +528,7 @@ async def list_clusters(db: AsyncSession = Depends(get_db)):
     
     out = []
     for cl in clusters:
-        c_out = ClusterOut.from_orm(cl)
+        c_out = ClusterOut.model_validate(cl)
         c_out.active_node = "MASTER"
         out.append(c_out)
     return out
@@ -614,7 +614,7 @@ async def failover_cluster_test(cluster_id: int, db: AsyncSession = Depends(get_
 
 @router.post("/clusters", response_model=ClusterOut)
 async def create_cluster(req: ClusterCreate, db: AsyncSession = Depends(get_db)):
-    c = KeepalivedCluster(**req.dict())
+    c = KeepalivedCluster(**req.model_dump())
     db.add(c)
     await db.commit()
     await db.refresh(c)
@@ -705,7 +705,7 @@ async def list_alert_channels(db: AsyncSession = Depends(get_db)):
 
 @router.post("/alerts/channels")
 async def create_alert_channel(req: AlertChannelCreate, db: AsyncSession = Depends(get_db)):
-    ch = AlertChannel(**req.dict())
+    ch = AlertChannel(**req.model_dump())
     db.add(ch)
     await db.commit()
     await db.refresh(ch)

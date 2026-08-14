@@ -14,7 +14,7 @@ import { SettingsView } from './views/SettingsView';
 import { PublicStatusPageView } from './views/PublicStatusPageView';
 
 import { Language } from './i18n/translations';
-import { Server, SmonTarget, Cluster, AuditLog, LiveMetrics } from './types';
+import { Server, SmonTarget, LiveMetrics } from './types';
 import { api, connectWebSocket } from './services/api';
 
 export const App: React.FC = () => {
@@ -24,8 +24,6 @@ export const App: React.FC = () => {
   // Data States
   const [servers, setServers] = useState<Server[]>([]);
   const [smonTargets, setSmonTargets] = useState<SmonTarget[]>([]);
-  const [clusters, setClusters] = useState<Cluster[]>([]);
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [metrics, setMetrics] = useState<LiveMetrics | null>(null);
 
   useEffect(() => {
@@ -35,21 +33,29 @@ export const App: React.FC = () => {
       setMetrics(liveMetrics);
     });
 
-    return () => cleanupWs();
+    // Global Escape Key Listener
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        const closeButtons = document.querySelectorAll<HTMLButtonElement>('[data-dismiss-modal]');
+        closeButtons.forEach(btn => btn.click());
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      cleanupWs();
+      window.removeEventListener('keydown', handleKeyDown);
+    };
   }, []);
 
   const fetchInitialData = async () => {
     try {
       const results = await Promise.allSettled([
         api.getServers(),
-        api.getSmonTargets(),
-        api.getClusters(),
-        api.getAuditLogs()
+        api.getSmonTargets()
       ]);
       if (results[0].status === 'fulfilled') setServers(results[0].value);
       if (results[1].status === 'fulfilled') setSmonTargets(results[1].value);
-      if (results[2].status === 'fulfilled') setClusters(results[2].value);
-      if (results[3].status === 'fulfilled') setAuditLogs(results[3].value);
     } catch (e) {
       console.error('Error loading UAProxy initial data', e);
     }
@@ -60,89 +66,68 @@ export const App: React.FC = () => {
     return <PublicStatusPageView onBackToDashboard={() => setCurrentTab('smon')} />;
   }
 
+  const renderContent = () => {
+    switch (currentTab) {
+      case 'dashboard':
+        return (
+          <DashboardView
+            lang={lang}
+            servers={servers}
+            metrics={metrics}
+            smonTargets={smonTargets}
+            onNavigate={(tab) => setCurrentTab(tab)}
+          />
+        );
+      case 'servers':
+        return <ServersView lang={lang} servers={servers} onRefresh={fetchInitialData} />;
+      case 'installer':
+        return <ServicesInstallerView lang={lang} servers={servers} onRefresh={fetchInitialData} />;
+      case 'configs':
+        return <ConfigEditorView lang={lang} servers={servers} />;
+      case 'runtime':
+        return <RuntimeControlView lang={lang} servers={servers} />;
+      case 'smon':
+        return <SmonView lang={lang} onOpenPublicStatus={() => setCurrentTab('public_status')} />;
+      case 'clusters':
+        return <ClustersView lang={lang} servers={servers} />;
+      case 'ssl_waf':
+        return <SslWafView lang={lang} />;
+      case 'alerts':
+        return <AlertsAuditView lang={lang} />;
+      case 'settings':
+        return <SettingsView lang={lang} />;
+      default:
+        return (
+          <DashboardView
+            lang={lang}
+            servers={servers}
+            metrics={metrics}
+            smonTargets={smonTargets}
+            onNavigate={(tab) => setCurrentTab(tab)}
+          />
+        );
+    }
+  };
+
   return (
-    <div className="min-h-screen flex flex-col">
-      <Navbar
+    <div className="flex h-screen bg-[#07090E] text-gray-100 overflow-hidden font-sans antialiased selection:bg-cyan-500 selection:text-black">
+      {/* Left Sidebar */}
+      <Sidebar
+        currentTab={currentTab}
+        setCurrentTab={(tab: string) => setCurrentTab(tab)}
         lang={lang}
-        setLang={setLang}
-        activeAlerts={metrics?.active_alerts || 0}
       />
 
-      <div className="flex-1 flex">
-        <Sidebar
-          currentTab={currentTab}
-          setCurrentTab={setCurrentTab}
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <Navbar
           lang={lang}
+          setLang={(l: Language) => setLang(l)}
+          activeAlerts={metrics?.active_alerts || 0}
         />
 
-        <main className="flex-1 p-6 md:p-8 max-w-7xl mx-auto w-full overflow-y-auto">
-          {currentTab === 'dashboard' && (
-            <DashboardView
-              lang={lang}
-              servers={servers}
-              metrics={metrics}
-              smonTargets={smonTargets}
-              onNavigate={setCurrentTab}
-            />
-          )}
-
-          {currentTab === 'servers' && (
-            <ServersView
-              lang={lang}
-              servers={servers}
-              onRefresh={fetchInitialData}
-            />
-          )}
-
-          {currentTab === 'installer' && (
-            <ServicesInstallerView
-              lang={lang}
-              servers={servers}
-              onRefresh={fetchInitialData}
-            />
-          )}
-
-          {currentTab === 'configs' && (
-            <ConfigEditorView
-              lang={lang}
-              servers={servers}
-            />
-          )}
-
-          {currentTab === 'runtime' && (
-            <RuntimeControlView
-              lang={lang}
-              servers={servers}
-            />
-          )}
-
-          {currentTab === 'smon' && (
-            <SmonView
-              lang={lang}
-              onOpenPublicStatus={() => setCurrentTab('public_status')}
-            />
-          )}
-
-          {currentTab === 'clusters' && (
-            <ClustersView
-              lang={lang}
-              servers={servers}
-            />
-          )}
-
-          {currentTab === 'ssl_waf' && (
-            <SslWafView lang={lang} />
-          )}
-
-          {currentTab === 'alerts' && (
-            <AlertsAuditView
-              lang={lang}
-            />
-          )}
-
-          {currentTab === 'settings' && (
-            <SettingsView lang={lang} />
-          )}
+        <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 space-y-6">
+          {renderContent()}
         </main>
       </div>
     </div>
