@@ -20,7 +20,8 @@ from app.schemas.schemas import (
     ConfigSave, ConfigValidateRequest, ConfigHistoryOut, RuntimeActionRequest,
     SmonTargetCreate, SmonTargetOut, ClusterCreate, ClusterOut, AlertChannelCreate, AuditLogOut,
     HAProxyWizardRequest, NginxWizardRequest, MasterSlaveSyncRequest, GitSettingsSchema,
-    MapEntryUpdateRequest, MaxconnUpdateRequest, ClusterWizardRequest, PublicStatusPageOut
+    MapEntryUpdateRequest, MaxconnUpdateRequest, ClusterWizardRequest, PublicStatusPageOut,
+    LetsEncryptIssueRequest, CustomCertUploadRequest, CertRenewRequest, WAFConfigUpdateRequest
 )
 from app.services.config_service import ConfigService
 from app.services.config_wizard import ConfigWizardService
@@ -30,6 +31,8 @@ from app.services.keepalived_service import KeepalivedService
 from app.services.ssh_service import SSHService
 from app.services.smon_checker import SmonCheckerService
 from app.services.notification import NotificationService
+from app.services.ssl_service import SSLService
+from app.services.waf_service import WAFService
 
 router = APIRouter()
 
@@ -490,7 +493,7 @@ async def create_smon_target(req: SmonTargetCreate, db: AsyncSession = Depends(g
     await db.refresh(target)
     return target
 
-# --- Public Status Page (Unauthenticated) ---
+# --- Public Status Page ---
 @router.get("/public/status-page", response_model=PublicStatusPageOut)
 async def get_public_status_page(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(SmonTarget))
@@ -623,7 +626,6 @@ async def failover_cluster_test(cluster_id: int, db: AsyncSession = Depends(get_
     m_res = await db.execute(select(Server).where(Server.id == cluster.master_server_id))
     master = m_res.scalars().first()
     
-    # Simulate HAProxy stop to trigger VRRP failover to Backup
     if master:
         await SSHService.execute_command(master, "systemctl stop haproxy")
 
@@ -642,6 +644,82 @@ async def create_cluster(req: ClusterCreate, db: AsyncSession = Depends(get_db))
     await db.commit()
     await db.refresh(c)
     return c
+
+# --- SSL Management ---
+@router.get("/ssl/{server_id}/certificates")
+async def list_ssl_certificates(server_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Server).where(Server.id == server_id))
+    server = result.scalars().first()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    certs = await SSLService.list_certificates(server)
+    return {"server_id": server_id, "certificates": certs}
+
+@router.post("/ssl/issue-letsencrypt")
+async def issue_letsencrypt_certificate(req: LetsEncryptIssueRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Server).where(Server.id == req.server_id))
+    server = result.scalars().first()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    res = await SSLService.issue_letsencrypt(server, req.domain, req.email, req.alt_names, req.challenge_type)
+    
+    audit = AuditLog(username="admin", action="ISSUE_LETSENCRYPT_SSL", resource_type="SSL", resource_id=req.domain, details=f"Issued Let's Encrypt SSL for {req.domain} on {server.hostname}")
+    db.add(audit)
+    await db.commit()
+
+    return res
+
+@router.post("/ssl/upload-custom")
+async def upload_custom_certificate(req: CustomCertUploadRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Server).where(Server.id == req.server_id))
+    server = result.scalars().first()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    res = await SSLService.upload_custom_cert(server, req.domain, req.cert_content, req.key_content)
+    
+    audit = AuditLog(username="admin", action="UPLOAD_CUSTOM_SSL", resource_type="SSL", resource_id=req.domain, details=f"Uploaded custom SSL for {req.domain} on {server.hostname}")
+    db.add(audit)
+    await db.commit()
+
+    return res
+
+@router.post("/ssl/renew")
+async def renew_ssl_certificate(req: CertRenewRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Server).where(Server.id == req.server_id))
+    server = result.scalars().first()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    res = await SSLService.renew_certificate(server, req.domain)
+    return res
+
+# --- WAF Management ---
+@router.get("/waf/status")
+async def get_waf_status():
+    return WAFService.get_waf_status()
+
+@router.get("/waf/events")
+async def get_waf_security_events():
+    events = WAFService.get_security_events()
+    return {"events": events}
+
+@router.post("/waf/config")
+async def update_waf_configuration(req: WAFConfigUpdateRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Server).where(Server.id == req.server_id))
+    server = result.scalars().first()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    res = await WAFService.update_waf_config(server, req.mode, req.rules)
+
+    audit = AuditLog(username="admin", action="UPDATE_WAF_CONFIG", resource_type="WAF", resource_id=str(req.server_id), details=f"Updated WAF mode to {req.mode} on {server.hostname}")
+    db.add(audit)
+    await db.commit()
+
+    return res
 
 # --- Alerts & Audit Logs ---
 @router.get("/alerts/channels")
@@ -679,6 +757,6 @@ async def list_audit_logs(db: AsyncSession = Depends(get_db)):
 @router.post("/alerts/test")
 async def send_test_alert(channel_type: str, config_json: str):
     res = await NotificationService.send_alert(
-        channel_type, config_json, "UAProxy Test Alert", "Test notification from UAProxy Premium Web Panel (Keepalived & SMON Healthcheck)"
+        channel_type, config_json, "UAProxy Test Alert", "Test notification from UAProxy Premium Web Panel"
     )
     return {"success": res, "message": "Test alert sent successfully" if res else "Alert dispatch failed"}

@@ -187,6 +187,47 @@ export const api = {
     return res.data;
   },
 
+  // SSL Management
+  getCertificates: async (serverId: number) => {
+    const res = await axios.get(`${API_BASE}/ssl/${serverId}/certificates`);
+    return res.data;
+  },
+
+  issueLetsEncrypt: async (data: { server_id: number; domain: string; email: string; alt_names?: string[]; challenge_type?: string }) => {
+    const res = await axios.post(`${API_BASE}/ssl/issue-letsencrypt`, data);
+    return res.data;
+  },
+
+  uploadCustomCert: async (data: { server_id: number; domain: string; cert_content: string; key_content: string }) => {
+    const res = await axios.post(`${API_BASE}/ssl/upload-custom`, data);
+    return res.data;
+  },
+
+  renewCertificate: async (serverId: number, domain: string) => {
+    const res = await axios.post(`${API_BASE}/ssl/renew`, { server_id: serverId, domain });
+    return res.data;
+  },
+
+  // WAF Management
+  getWafStatus: async () => {
+    const res = await axios.get(`${API_BASE}/waf/status`);
+    return res.data;
+  },
+
+  getWafEvents: async () => {
+    const res = await axios.get(`${API_BASE}/waf/events`);
+    return res.data;
+  },
+
+  updateWafConfig: async (serverId: number, mode: string, rules: Record<string, boolean>) => {
+    const res = await axios.post(`${API_BASE}/waf/config`, {
+      server_id: serverId,
+      mode,
+      rules
+    });
+    return res.data;
+  },
+
   // Audits & Alerts
   getAuditLogs: async (): Promise<AuditLog[]> => {
     const res = await axios.get(`${API_BASE}/audit`);

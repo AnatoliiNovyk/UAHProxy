@@ -215,6 +215,30 @@ class ClusterOut(BaseModel):
     class Config:
         from_attributes = True
 
+# --- SSL Schemas ---
+class LetsEncryptIssueRequest(BaseModel):
+    server_id: int
+    domain: str
+    email: EmailStr
+    alt_names: Optional[List[str]] = None
+    challenge_type: str = "http-01"
+
+class CustomCertUploadRequest(BaseModel):
+    server_id: int
+    domain: str
+    cert_content: str
+    key_content: str
+
+class CertRenewRequest(BaseModel):
+    server_id: int
+    domain: str
+
+# --- WAF Schemas ---
+class WAFConfigUpdateRequest(BaseModel):
+    server_id: int
+    mode: str = "BLOCKING" # DISABLED, DETECTION_ONLY, BLOCKING
+    rules: Dict[str, bool]
+
 # --- Audit & Alerts ---
 class AlertChannelCreate(BaseModel):
     name: str
