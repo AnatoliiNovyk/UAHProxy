@@ -91,11 +91,11 @@ export const App: React.FC = () => {
       case 'clusters':
         return <ClustersView lang={lang} servers={servers} />;
       case 'ssl_waf':
-        return <SslWafView lang={lang} />;
+        return <SslWafView lang={lang} servers={servers} />;
       case 'alerts':
         return <AlertsAuditView lang={lang} />;
       case 'settings':
-        return <SettingsView lang={lang} />;
+        return <SettingsView lang={lang} servers={servers} />;
       default:
         return (
           <DashboardView

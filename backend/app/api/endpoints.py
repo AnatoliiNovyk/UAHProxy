@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import delete, or_
-from typing import List, Optional
+from sqlalchemy import delete, or_, update
+from sqlalchemy.orm import selectinload
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 from app.core.database import get_db
@@ -80,10 +81,10 @@ async def list_users(db: AsyncSession = Depends(get_db)):
     users = result.scalars().all()
     return users
 
-# --- Server Groups ---
+# --- RBAC & Server Groups ---
 @router.get("/rbac/groups", response_model=List[ServerGroupOut])
 async def list_server_groups(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(ServerGroup))
+    result = await db.execute(select(ServerGroup).options(selectinload(ServerGroup.servers)))
     groups = result.scalars().all()
     out = []
     for g in groups:
@@ -97,6 +98,22 @@ async def create_server_group(req: ServerGroupCreate, db: AsyncSession = Depends
     await db.commit()
     await db.refresh(group)
     return ServerGroupOut(id=group.id, name=group.name, description=group.description, server_count=0)
+
+@router.delete("/rbac/groups/{group_id}")
+async def delete_server_group(group_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(ServerGroup).where(ServerGroup.id == group_id))
+    group = result.scalars().first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Server group not found")
+    
+    # Dissociate servers and users from group before deletion
+    await db.execute(update(Server).where(Server.group_id == group_id).values(group_id=None))
+    await db.execute(update(User).where(User.group_id == group_id).values(group_id=None))
+    
+    name = group.name
+    await db.delete(group)
+    await db.commit()
+    return {"success": True, "message": f"Server group {name} deleted successfully"}
 
 # --- Server Management ---
 @router.get("/servers", response_model=List[ServerOut])
@@ -188,10 +205,25 @@ async def install_service(server_id: int, service_name: str, db: AsyncSession = 
 # --- Metrics & Time Series ---
 @router.get("/metrics/{server_id}/timeseries", response_model=TimeSeriesMetricsOut)
 async def get_server_timeseries_metrics(server_id: int, period: str = "24h", db: AsyncSession = Depends(get_db)):
+    if server_id <= 0:
+        return TimeSeriesMetricsOut(
+            server_id=0,
+            hostname="None",
+            period=period,
+            summary={"avg_rps": 0.0, "avg_latency_ms": 0.0, "total_bandwidth_gb": 0.0, "peak_sessions": 0},
+            points=[]
+        )
+    
     result = await db.execute(select(Server).where(Server.id == server_id))
     server = result.scalars().first()
     if not server:
-        raise HTTPException(status_code=404, detail="Server not found")
+        return TimeSeriesMetricsOut(
+            server_id=server_id,
+            hostname="Not Found",
+            period=period,
+            summary={"avg_rps": 0.0, "avg_latency_ms": 0.0, "total_bandwidth_gb": 0.0, "peak_sessions": 0},
+            points=[]
+        )
 
     metrics = await MetricsService.get_timeseries_metrics(server, period)
     return metrics

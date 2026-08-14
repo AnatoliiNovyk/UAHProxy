@@ -14,7 +14,7 @@ interface ConfigEditorViewProps {
 
 export const ConfigEditorView: React.FC<ConfigEditorViewProps> = ({ lang, servers }) => {
   const t = translations[lang];
-  const [selectedServerId, setSelectedServerId] = useState<number>(servers[0]?.id || 1);
+  const [selectedServerId, setSelectedServerId] = useState<number>(servers[0]?.id || 0);
   const [serviceType, setServiceType] = useState<string>('haproxy');
   const [configContent, setConfigContent] = useState<string>('');
   const [commitMsg, setCommitMsg] = useState<string>('Updated configuration via UAProxy Studio');
@@ -30,17 +30,27 @@ export const ConfigEditorView: React.FC<ConfigEditorViewProps> = ({ lang, server
   const [reloading, setReloading] = useState<boolean>(false);
 
   useEffect(() => {
-    if (servers.length > 0 && !servers.some(s => s.id === selectedServerId)) {
-      setSelectedServerId(servers[0].id);
+    if (servers.length > 0) {
+      if (!servers.some(s => s.id === selectedServerId)) {
+        setSelectedServerId(servers[0].id);
+      }
+    } else {
+      setSelectedServerId(0);
     }
   }, [servers]);
 
   useEffect(() => {
-    loadConfig();
-    loadHistory();
+    if (selectedServerId > 0) {
+      loadConfig();
+      loadHistory();
+    } else {
+      setConfigContent('');
+      setHistory([]);
+    }
   }, [selectedServerId, serviceType]);
 
   const loadConfig = async () => {
+    if (selectedServerId <= 0) return;
     try {
       const res = await api.getConfig(selectedServerId, serviceType);
       setConfigContent(res.content);
@@ -50,6 +60,7 @@ export const ConfigEditorView: React.FC<ConfigEditorViewProps> = ({ lang, server
   };
 
   const loadHistory = async () => {
+    if (selectedServerId <= 0) return;
     try {
       const res = await api.getConfigHistory(selectedServerId, serviceType);
       setHistory(res);

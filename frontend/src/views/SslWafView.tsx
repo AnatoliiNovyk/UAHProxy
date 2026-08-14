@@ -3,15 +3,28 @@ import { ShieldCheck, Lock, Plus, RefreshCw, Key, AlertTriangle, CheckCircle2, S
 import { Language, translations } from '../i18n/translations';
 import { api } from '../services/api';
 
+import { Server } from '../types';
+
 interface SslWafViewProps {
   lang: Language;
+  servers: Server[];
 }
 
-export const SslWafView: React.FC<SslWafViewProps> = ({ lang }) => {
+export const SslWafView: React.FC<SslWafViewProps> = ({ lang, servers }) => {
   const t = translations[lang];
   const [activeTab, setActiveTab] = useState<'ssl' | 'waf'>('ssl');
-  const [selectedServerId, setSelectedServerId] = useState<number>(1);
+  const [selectedServerId, setSelectedServerId] = useState<number>(servers[0]?.id || 0);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (servers.length > 0) {
+      if (!servers.some(s => s.id === selectedServerId)) {
+        setSelectedServerId(servers[0].id);
+      }
+    } else {
+      setSelectedServerId(0);
+    }
+  }, [servers]);
 
   // SSL State
   const [certs, setCerts] = useState<any[]>([]);
@@ -37,6 +50,10 @@ export const SslWafView: React.FC<SslWafViewProps> = ({ lang }) => {
   });
 
   useEffect(() => {
+    if (activeTab === 'ssl' && selectedServerId <= 0) {
+      setCerts([]);
+      return;
+    }
     loadData();
   }, [activeTab, selectedServerId]);
 
@@ -44,8 +61,12 @@ export const SslWafView: React.FC<SslWafViewProps> = ({ lang }) => {
     setLoading(true);
     try {
       if (activeTab === 'ssl') {
-        const res = await api.getCertificates(selectedServerId);
-        setCerts(res.certificates);
+        if (selectedServerId > 0) {
+          const res = await api.getCertificates(selectedServerId);
+          setCerts(res.certificates);
+        } else {
+          setCerts([]);
+        }
       } else {
         const [statusRes, eventsRes] = await Promise.all([
           api.getWafStatus(),
@@ -166,15 +187,31 @@ export const SslWafView: React.FC<SslWafViewProps> = ({ lang }) => {
       {/* TAB 1: SSL Certificates */}
       {activeTab === 'ssl' && (
         <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-white uppercase tracking-wider">
-              Встановлені SSL Сертифікати ({certs.length})
-            </span>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center space-x-3">
+              <span className="text-xs font-bold text-white uppercase tracking-wider">
+                Встановлені SSL Сертифікати ({certs.length})
+              </span>
+              {servers.length > 0 && (
+                <select
+                  value={selectedServerId}
+                  onChange={(e) => setSelectedServerId(Number(e.target.value))}
+                  className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-1 text-xs text-cyan-300 outline-none font-mono focus:border-cyan-400"
+                >
+                  {servers.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.hostname} ({s.ip_address})
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
 
             <div className="flex items-center space-x-2">
               <button
                 onClick={() => setShowUploadModal(true)}
-                className="px-3.5 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-purple-300 font-medium text-xs border border-gray-700 flex items-center space-x-1.5 transition"
+                disabled={servers.length === 0 || selectedServerId <= 0}
+                className="px-3.5 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-purple-300 font-medium text-xs border border-gray-700 flex items-center space-x-1.5 transition"
               >
                 <FileText className="w-4 h-4 text-purple-400" />
                 <span>Завантажити Кастомний Cert</span>
@@ -182,7 +219,8 @@ export const SslWafView: React.FC<SslWafViewProps> = ({ lang }) => {
 
               <button
                 onClick={() => setShowIssueModal(true)}
-                className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-500 hover:from-cyan-400 hover:to-purple-400 text-black font-bold text-xs shadow-lg shadow-cyan-950/50 flex items-center space-x-1.5 transition"
+                disabled={servers.length === 0 || selectedServerId <= 0}
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-500 hover:from-cyan-400 hover:to-purple-400 disabled:opacity-50 text-black font-bold text-xs shadow-lg shadow-cyan-950/50 flex items-center space-x-1.5 transition"
               >
                 <Plus className="w-4 h-4" />
                 <span>Випустити Let's Encrypt (Certbot)</span>
@@ -190,8 +228,21 @@ export const SslWafView: React.FC<SslWafViewProps> = ({ lang }) => {
             </div>
           </div>
 
-          {/* Cert Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Cert Cards or Empty State */}
+          {certs.length === 0 ? (
+            <div className="glass-panel p-12 rounded-2xl border border-gray-800 text-center space-y-4">
+              <div className="w-16 h-16 rounded-2xl bg-cyan-950/60 border border-cyan-800/80 mx-auto flex items-center justify-center text-cyan-400">
+                <Lock className="w-8 h-8" />
+              </div>
+              <div className="space-y-1 max-w-md mx-auto">
+                <h3 className="font-bold text-white text-base">Немає випущених SSL сертифікатів</h3>
+                <p className="text-xs text-gray-400">
+                  Випустіть безкоштовний Let's Encrypt сертифікат з автоматичним оновленням або завантажте власний PEM/KEY сертифікат для HAProxy.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {certs.map((c) => (
               <div key={c.id} className="glass-panel p-6 rounded-2xl border border-gray-800 space-y-4">
                 <div className="flex items-center justify-between border-b border-gray-800 pb-3">
@@ -256,6 +307,7 @@ export const SslWafView: React.FC<SslWafViewProps> = ({ lang }) => {
               </div>
             ))}
           </div>
+        )}
 
           {/* Issue Modal */}
           {showIssueModal && (

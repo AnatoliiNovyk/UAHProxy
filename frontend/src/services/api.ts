@@ -30,6 +30,11 @@ export const api = {
     return res.data;
   },
 
+  deleteServerGroup: async (groupId: number) => {
+    const res = await axios.delete(`${API_BASE}/rbac/groups/${groupId}`);
+    return res.data;
+  },
+
   // Servers
   getServers: async (): Promise<Server[]> => {
     const res = await axios.get(`${API_BASE}/servers`);

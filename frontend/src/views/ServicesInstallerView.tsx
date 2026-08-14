@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { DownloadCloud, Shield, CheckCircle, Terminal, RefreshCw } from 'lucide-react';
+import { DownloadCloud, Shield, CheckCircle, Terminal, RefreshCw, Server as ServerIcon, Plus } from 'lucide-react';
 import { Language, translations } from '../i18n/translations';
 import { Server } from '../types';
 import { api } from '../services/api';
@@ -12,13 +12,17 @@ interface ServicesInstallerViewProps {
 
 export const ServicesInstallerView: React.FC<ServicesInstallerViewProps> = ({ lang, servers, onRefresh }) => {
   const t = translations[lang];
-  const [selectedServerId, setSelectedServerId] = useState<number>(servers[0]?.id || 1);
+  const [selectedServerId, setSelectedServerId] = useState<number>(servers[0]?.id || 0);
   const [installingPackage, setInstallingPackage] = useState<string | null>(null);
   const [outputLogs, setOutputLogs] = useState<string>('');
 
   useEffect(() => {
-    if (servers.length > 0 && !servers.some(s => s.id === selectedServerId)) {
-      setSelectedServerId(servers[0].id);
+    if (servers.length > 0) {
+      if (!servers.some(s => s.id === selectedServerId)) {
+        setSelectedServerId(servers[0].id);
+      }
+    } else {
+      setSelectedServerId(0);
     }
   }, [servers]);
 
@@ -32,18 +36,50 @@ export const ServicesInstallerView: React.FC<ServicesInstallerViewProps> = ({ la
   ];
 
   const handleInstall = async (serviceName: string) => {
+    if (!selectedServerId || servers.length === 0) {
+      alert('Будь ласка, оберіть підключений сервер для інсталяції.');
+      return;
+    }
+
     setInstallingPackage(serviceName);
-    setOutputLogs(`[UAProxy] Triggering installation of ${serviceName} on server ID ${selectedServerId}...\n`);
+    const targetServer = servers.find(s => s.id === selectedServerId);
+    setOutputLogs(`[UAProxy] Triggering installation of ${serviceName} on ${targetServer?.hostname || `Server ID ${selectedServerId}`}...\n`);
     try {
       const res = await api.installService(selectedServerId, serviceName);
       setOutputLogs(prev => prev + `[SUCCESS]: ${res.logs}\nPackage ${serviceName} fully provisioned.\n`);
       onRefresh();
     } catch (e: any) {
-      setOutputLogs(prev => prev + `[ERROR]: Failed to install ${serviceName}: ${e.message}\n`);
+      setOutputLogs(prev => prev + `[ERROR]: Failed to install ${serviceName}: ${e.response?.data?.detail || e.message}\n`);
     } finally {
       setInstallingPackage(null);
     }
   };
+
+  if (servers.length === 0) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-xl font-bold text-white flex items-center space-x-2">
+            <DownloadCloud className="w-6 h-6 text-cyan-400" />
+            <span>1-Click Встановлювач Сервісів (Service Provisioning Wizard)</span>
+          </h1>
+          <p className="text-gray-400 text-xs mt-1">Автоматична інсталяція та налаштування HAProxy, Nginx, Apache, Keepalived та Prometheus Exporters</p>
+        </div>
+
+        <div className="glass-panel p-12 rounded-2xl border border-gray-800 text-center space-y-4">
+          <div className="w-16 h-16 rounded-2xl bg-cyan-950/60 border border-cyan-800/80 mx-auto flex items-center justify-center text-cyan-400">
+            <ServerIcon className="w-8 h-8" />
+          </div>
+          <div className="space-y-1 max-w-md mx-auto">
+            <h3 className="font-bold text-white text-base">Немає підключених серверів</h3>
+            <p className="text-xs text-gray-400">
+              Щоб встановлювати HAProxy, Nginx або Keepalived в 1 клік, спочатку підключіть хоча б один сервер у вкладці "Сервери".
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -60,55 +96,59 @@ export const ServicesInstallerView: React.FC<ServicesInstallerViewProps> = ({ la
         <select
           value={selectedServerId}
           onChange={(e) => setSelectedServerId(Number(e.target.value))}
-          className="bg-gray-900 border border-gray-700 rounded-xl px-4 py-2 text-sm text-cyan-300 font-mono outline-none focus:border-cyan-400"
+          className="bg-gray-900 border border-gray-700 rounded-xl px-4 py-2 text-sm text-cyan-300 outline-none font-mono focus:border-cyan-400"
         >
           {servers.map((s) => (
             <option key={s.id} value={s.id}>
-              {s.hostname} ({s.ip_address})
+              {s.hostname} ({s.ip_address}) - [{s.ssh_status || 'UNCHECKED'}]
             </option>
           ))}
         </select>
       </div>
 
-      {/* Services Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {services.map((svc) => (
-          <div key={svc.name} className="glass-panel p-5 rounded-2xl border border-gray-800 flex flex-col justify-between hover:border-gray-700 transition">
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-mono px-2 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800">
+          <div key={svc.name} className="glass-panel p-6 rounded-2xl border border-gray-800 space-y-4 flex flex-col justify-between hover:border-cyan-800/60 transition">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 uppercase font-bold">
                   {svc.category}
                 </span>
-                <Shield className="w-4 h-4 text-gray-500" />
               </div>
               <h3 className="font-bold text-white text-base">{svc.label}</h3>
-              <p className="text-gray-400 text-xs mt-1 leading-relaxed">{svc.desc}</p>
+              <p className="text-xs text-gray-400 leading-relaxed">{svc.desc}</p>
             </div>
 
             <button
               onClick={() => handleInstall(svc.name)}
-              disabled={installingPackage === svc.name}
-              className="mt-5 w-full py-2 px-3 rounded-xl bg-gray-800 hover:bg-cyan-500 hover:text-black font-semibold text-xs text-cyan-300 border border-gray-700 hover:border-cyan-400 transition flex items-center justify-center space-x-2"
+              disabled={installingPackage === svc.name || selectedServerId === 0}
+              className="w-full py-2.5 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 disabled:opacity-50 text-black font-semibold text-xs rounded-xl shadow-lg shadow-cyan-950/40 flex items-center justify-center space-x-2 transition"
             >
               {installingPackage === svc.name ? (
-                <RefreshCw className="w-4 h-4 animate-spin text-cyan-400" />
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Встановлення пакету...</span>
+                </>
               ) : (
-                <DownloadCloud className="w-4 h-4" />
+                <>
+                  <DownloadCloud className="w-4 h-4" />
+                  <span>Встановити на Сервер</span>
+                </>
               )}
-              <span>{installingPackage === svc.name ? 'Встановлюється...' : 'Встановити 1-Click'}</span>
             </button>
           </div>
         ))}
       </div>
 
-      {/* Terminal Log Console */}
       {outputLogs && (
-        <div className="glass-panel p-4 rounded-2xl border border-gray-800 bg-black/90 font-mono text-xs text-emerald-400 space-y-2">
-          <div className="flex items-center space-x-2 text-gray-400 border-b border-gray-800 pb-2">
-            <Terminal className="w-4 h-4 text-cyan-400" />
-            <span>Installation Execution Console Output</span>
+        <div className="glass-panel p-5 rounded-2xl border border-gray-800 space-y-2">
+          <div className="flex items-center space-x-2 text-xs font-mono text-cyan-400 font-semibold">
+            <Terminal className="w-4 h-4" />
+            <span>Журнал Виконання Інсталяції (Live Provisioning Log)</span>
           </div>
-          <pre className="whitespace-pre-wrap overflow-x-auto max-h-60 p-2">{outputLogs}</pre>
+          <pre className="p-4 bg-gray-950 rounded-xl font-mono text-xs text-gray-300 overflow-x-auto max-h-60 whitespace-pre-wrap">
+            {outputLogs}
+          </pre>
         </div>
       )}
     </div>

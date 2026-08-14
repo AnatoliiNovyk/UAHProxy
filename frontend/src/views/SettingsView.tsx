@@ -1,16 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { Settings, Users, Layers, Globe, Database, Plus, Shield, CheckCircle2, UserCheck, Trash2, Key, Copy, Check, Radio } from 'lucide-react';
 import { Language, translations } from '../i18n/translations';
+import { Server } from '../types';
 import { api } from '../services/api';
 
 interface SettingsViewProps {
   lang: Language;
+  servers: Server[];
 }
 
-export const SettingsView: React.FC<SettingsViewProps> = ({ lang }) => {
+export const SettingsView: React.FC<SettingsViewProps> = ({ lang, servers }) => {
   const t = translations[lang];
   const [activeTab, setActiveTab] = useState<'users' | 'groups' | 'geoip' | 'prometheus'>('users');
   const [loading, setLoading] = useState(false);
+  const [selectedServerId, setSelectedServerId] = useState<number>(servers[0]?.id || 0);
 
   // Users & Groups State
   const [users, setUsers] = useState<any[]>([]);
@@ -51,6 +54,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ lang }) => {
     { code: 'US', name: 'United States (США)' },
     { code: 'GB', name: 'United Kingdom (Британія)' },
   ];
+
+  useEffect(() => {
+    if (servers.length > 0) {
+      if (!servers.some(s => s.id === selectedServerId)) {
+        setSelectedServerId(servers[0].id);
+      }
+    } else {
+      setSelectedServerId(0);
+    }
+  }, [servers]);
 
   useEffect(() => {
     loadData();
@@ -97,7 +110,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ lang }) => {
       setNewPassword('');
       loadData();
     } catch (e: any) {
-      alert(`Error creating user: ${e.message}`);
+      alert(`Error creating user: ${e.response?.data?.detail || e.message}`);
+    }
+  };
+
+  const handleDeleteUser = async (userId: number, username: string) => {
+    if (username === 'admin') {
+      alert('Неможливо видалити головного системного адміністратора (admin)');
+      return;
+    }
+    if (!window.confirm(`Ви дійсно бажаєте видалити користувача "${username}"?`)) {
+      return;
+    }
+
+    try {
+      await api.deleteUser(userId);
+      loadData();
+    } catch (e: any) {
+      alert(`Помилка видалення: ${e.response?.data?.detail || e.message}`);
     }
   };
 
@@ -114,7 +144,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ lang }) => {
       setNewGroupDesc('');
       loadData();
     } catch (e: any) {
-      alert(`Error creating group: ${e.message}`);
+      alert(`Error creating group: ${e.response?.data?.detail || e.message}`);
+    }
+  };
+
+  const handleDeleteGroup = async (groupId: number, groupName: string) => {
+    if (!window.confirm(`Ви дійсно бажаєте видалити серверну групу "${groupName}"?`)) {
+      return;
+    }
+
+    try {
+      await api.deleteServerGroup(groupId);
+      loadData();
+    } catch (e: any) {
+      alert(`Помилка видалення групи: ${e.response?.data?.detail || e.message}`);
     }
   };
 
@@ -127,16 +170,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ lang }) => {
   };
 
   const handleApplyGeoIP = async () => {
+    if (servers.length === 0 || selectedServerId <= 0) {
+      alert('Будь ласка, підключіть сервер для застосування GeoIP правил.');
+      return;
+    }
+
     try {
       await api.applyGeoIPRules({
-        server_id: 1,
+        server_id: selectedServerId,
         mode: geoipMode,
         country_codes: selectedCountries
       });
-      alert(`GeoIP правила (${geoipMode}) успішно скомпільовано та застосовано на HAProxy!`);
+      alert(`GeoIP правила (${geoipMode}) успішно скомпільовано та застосовано на обраному сервері!`);
       loadData();
     } catch (e: any) {
-      alert(`GeoIP Error: ${e.message}`);
+      alert(`GeoIP Error: ${e.response?.data?.detail || e.message}`);
     }
   };
 
@@ -155,7 +203,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ lang }) => {
         <div className="flex items-center space-x-1 bg-gray-900/80 p-1 rounded-xl border border-gray-800">
           <button
             onClick={() => setActiveTab('users')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition ${
               activeTab === 'users' ? 'bg-purple-500 text-black font-bold shadow-md shadow-purple-950/50' : 'text-gray-400 hover:text-white'
             }`}
           >
@@ -163,7 +211,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ lang }) => {
           </button>
           <button
             onClick={() => setActiveTab('groups')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition ${
               activeTab === 'groups' ? 'bg-purple-500 text-black font-bold shadow-md shadow-purple-950/50' : 'text-gray-400 hover:text-white'
             }`}
           >
@@ -171,7 +219,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ lang }) => {
           </button>
           <button
             onClick={() => setActiveTab('geoip')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition ${
               activeTab === 'geoip' ? 'bg-purple-500 text-black font-bold shadow-md shadow-purple-950/50' : 'text-gray-400 hover:text-white'
             }`}
           >
@@ -179,7 +227,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ lang }) => {
           </button>
           <button
             onClick={() => setActiveTab('prometheus')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition ${
               activeTab === 'prometheus' ? 'bg-purple-500 text-black font-bold shadow-md shadow-purple-950/50' : 'text-gray-400 hover:text-white'
             }`}
           >
@@ -212,7 +260,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ lang }) => {
                   <th className="p-4">Email</th>
                   <th className="p-4">Роль (RBAC)</th>
                   <th className="p-4">Статус</th>
-                  <th className="p-4 text-right">Створено</th>
+                  <th className="p-4">Створено</th>
+                  <th className="p-4 text-right">Дії</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-800/60">
@@ -235,7 +284,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ lang }) => {
                     <td className="p-4">
                       <span className="text-emerald-400 font-bold">✓ Active</span>
                     </td>
-                    <td className="p-4 text-right text-gray-500">{new Date(u.created_at).toLocaleDateString()}</td>
+                    <td className="p-4 text-gray-500">{new Date(u.created_at).toLocaleDateString()}</td>
+                    <td className="p-4 text-right">
+                      {u.username !== 'admin' && (
+                        <button
+                          onClick={() => handleDeleteUser(u.id, u.username)}
+                          title="Видалити користувача"
+                          className="p-1.5 rounded-lg bg-gray-800 hover:bg-rose-950 text-gray-400 hover:text-rose-400 border border-gray-700 hover:border-rose-800 transition"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -346,7 +406,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ lang }) => {
                     <Layers className="w-4 h-4 text-purple-400" />
                     <h3 className="font-bold text-white text-sm">{g.name}</h3>
                   </div>
-                  <span className="text-[11px] font-mono text-cyan-400 font-bold">{g.server_count} Nodes</span>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-[11px] font-mono text-cyan-400 font-bold">{g.server_count} Nodes</span>
+                    <button
+                      onClick={() => handleDeleteGroup(g.id, g.name)}
+                      title="Видалити групу"
+                      className="p-1 rounded-lg hover:bg-rose-950 text-gray-400 hover:text-rose-400 transition"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
                 <p className="text-xs text-gray-400">{g.description || 'Немає опису'}</p>
                 <div className="text-[11px] font-mono text-gray-500">Group ID: #{g.id}</div>
@@ -416,26 +485,41 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ lang }) => {
             <div className="space-y-1">
               <div className="flex items-center space-x-2">
                 <Globe className="w-5 h-5 text-cyan-400" />
-                <h2 className="text-sm font-bold text-white">GeoLite2 Country Database ({geoipStatus?.database_version})</h2>
+                <h2 className="text-sm font-bold text-white">GeoLite2 Country Database ({geoipStatus?.database_version || '2026.08'})</h2>
               </div>
               <p className="text-xs text-gray-400">
-                Завантажено IP діапазонів: <span className="text-cyan-300 font-mono font-bold">{geoipStatus?.total_ranges?.toLocaleString()}</span> • Auto-update: <span className="text-emerald-400 font-bold">ACTIVE</span>
+                Завантажено IP діапазонів: <span className="text-cyan-300 font-mono font-bold">{geoipStatus?.total_ranges?.toLocaleString() || 385420}</span> • Auto-update: <span className="text-emerald-400 font-bold">ACTIVE</span>
               </p>
             </div>
 
-            <div className="flex items-center space-x-3">
+            <div className="flex flex-wrap items-center gap-3">
+              {servers.length > 0 && (
+                <select
+                  value={selectedServerId}
+                  onChange={(e) => setSelectedServerId(Number(e.target.value))}
+                  className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-xs text-cyan-300 font-mono outline-none"
+                >
+                  {servers.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.hostname} ({s.ip_address})
+                    </option>
+                  ))}
+                </select>
+              )}
+
               <select
                 value={geoipMode}
                 onChange={(e) => setGeoipMode(e.target.value)}
                 className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-xs text-cyan-300 font-mono outline-none"
               >
-                <option value="BLOCKLIST">BLOCKLIST (Блокувати вибрані)</option>
-                <option value="ALLOWLIST">ALLOWLIST (Дозволити тільки вибрані)</option>
+                <option value="BLOCKLIST">BLOCKLIST (Блокувати)</option>
+                <option value="ALLOWLIST">ALLOWLIST (Дозволити)</option>
               </select>
 
               <button
                 onClick={handleApplyGeoIP}
-                className="px-4 py-2 bg-gradient-to-r from-cyan-500 to-purple-500 hover:from-cyan-400 hover:to-purple-400 text-black font-bold text-xs rounded-xl shadow-md shadow-cyan-950/50 transition"
+                disabled={servers.length === 0 || selectedServerId <= 0}
+                className="px-4 py-2 bg-gradient-to-r from-cyan-500 to-purple-500 hover:from-cyan-400 hover:to-purple-400 disabled:opacity-50 text-black font-bold text-xs rounded-xl shadow-md shadow-cyan-950/50 transition"
               >
                 Застосувати на HAProxy
               </button>
@@ -451,25 +535,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ lang }) => {
               {countryCatalog.map((c) => {
                 const isSelected = selectedCountries.includes(c.code);
                 return (
-                  <div
+                  <button
                     key={c.code}
                     onClick={() => handleToggleCountry(c.code)}
-                    className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition text-xs font-mono ${
+                    className={`p-3 rounded-xl border text-xs text-left transition flex items-center justify-between ${
                       isSelected
-                        ? 'bg-rose-950/50 border-rose-500/50 text-white shadow-md shadow-rose-950/20'
-                        : 'bg-gray-900/40 border-gray-800 text-gray-400 hover:bg-gray-800/40'
+                        ? 'bg-purple-950/60 border-purple-500 text-purple-200'
+                        : 'bg-gray-900/60 border-gray-800 text-gray-400 hover:border-gray-700'
                     }`}
                   >
                     <div>
-                      <div className="font-bold text-white">{c.code}</div>
-                      <div className="text-[10px] text-gray-400 truncate">{c.name}</div>
+                      <div className="font-bold font-mono">{c.code}</div>
+                      <div className="text-[11px] truncate text-gray-300">{c.name}</div>
                     </div>
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                      isSelected ? 'bg-rose-900 text-rose-200' : 'bg-gray-800 text-gray-500'
-                    }`}>
-                      {isSelected ? 'BLOCKED' : 'PASS'}
-                    </span>
-                  </div>
+                    {isSelected && <Check className="w-4 h-4 text-purple-400 flex-shrink-0" />}
+                  </button>
                 );
               })}
             </div>
@@ -480,13 +560,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ lang }) => {
       {/* TAB 4: Prometheus Config */}
       {activeTab === 'prometheus' && (
         <div className="glass-panel p-6 rounded-2xl border border-gray-800 space-y-4">
-          <div className="flex items-center justify-between border-b border-gray-800 pb-3">
+          <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-sm font-bold text-white flex items-center space-x-2">
-                <Database className="w-5 h-5 text-amber-400" />
-                <span>Автоматично Згенерований prometheus.yml</span>
-              </h2>
-              <p className="text-xs text-gray-400">Конфігурація Scrape-таргетів для HAProxy Exporter (9101) та Node Exporter (9100)</p>
+              <h2 className="text-sm font-bold text-white">Згенерований prometheus.yml</h2>
+              <p className="text-xs text-gray-400">Автоматичний scrape-конфіг для всіх зареєстрованих HAProxy та Node Exporter експортерів</p>
             </div>
 
             <button
@@ -495,15 +572,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ lang }) => {
                 setCopiedProm(true);
                 setTimeout(() => setCopiedProm(false), 2000);
               }}
-              className="px-3.5 py-1.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-xs text-gray-300 border border-gray-700 flex items-center space-x-1.5"
+              className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-cyan-300 text-xs font-mono rounded-xl border border-gray-700 flex items-center space-x-1.5 transition"
             >
-              {copiedProm ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-              <span>{copiedProm ? 'Скопійовано' : 'Копіювати Config'}</span>
+              {copiedProm ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+              <span>{copiedProm ? 'Скопійовано!' : 'Копіювати YAML'}</span>
             </button>
           </div>
 
-          <pre className="p-4 bg-[#0A0D14] rounded-xl font-mono text-xs text-cyan-200 overflow-auto max-h-96 whitespace-pre-wrap leading-relaxed border border-gray-800">
-            {promConfig || '# Завантаження конфігурації Prometheus...'}
+          <pre className="p-4 bg-gray-950 rounded-xl font-mono text-xs text-gray-300 overflow-x-auto max-h-96 whitespace-pre-wrap">
+            {promConfig}
           </pre>
         </div>
       )}

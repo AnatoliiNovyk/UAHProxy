@@ -11,7 +11,7 @@ interface RuntimeControlViewProps {
 
 export const RuntimeControlView: React.FC<RuntimeControlViewProps> = ({ lang, servers }) => {
   const t = translations[lang];
-  const [selectedServerId, setSelectedServerId] = useState<number>(servers[0]?.id || 1);
+  const [selectedServerId, setSelectedServerId] = useState<number>(servers[0]?.id || 0);
   const [activeTab, setActiveTab] = useState<'servers' | 'stick_tables' | 'maps' | 'maxconn'>('servers');
   const [stats, setStats] = useState<HAProxyStat[]>([]);
   const [stickTables, setStickTables] = useState<any[]>([]);
@@ -28,16 +28,27 @@ export const RuntimeControlView: React.FC<RuntimeControlViewProps> = ({ lang, se
   const [targetMap, setTargetMap] = useState('ip_blacklist.map');
 
   useEffect(() => {
-    if (servers.length > 0 && !servers.some(s => s.id === selectedServerId)) {
-      setSelectedServerId(servers[0].id);
+    if (servers.length > 0) {
+      if (!servers.some(s => s.id === selectedServerId)) {
+        setSelectedServerId(servers[0].id);
+      }
+    } else {
+      setSelectedServerId(0);
     }
   }, [servers]);
 
   useEffect(() => {
-    fetchData();
+    if (selectedServerId > 0) {
+      fetchData();
+    } else {
+      setStats([]);
+      setStickTables([]);
+      setMaps([]);
+    }
   }, [selectedServerId, activeTab]);
 
   const fetchData = async () => {
+    if (selectedServerId <= 0) return;
     setLoading(true);
     try {
       if (activeTab === 'servers') {

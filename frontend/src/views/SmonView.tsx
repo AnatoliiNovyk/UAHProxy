@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Radio, Plus, CheckCircle2, AlertTriangle, XCircle, RefreshCw, Globe, Shield, Activity, ExternalLink } from 'lucide-react';
+import { Radio, Plus, CheckCircle2, AlertTriangle, XCircle, RefreshCw, Globe, Shield, Activity, ExternalLink, Trash2 } from 'lucide-react';
 import { Language, translations } from '../i18n/translations';
 import { SmonTarget } from '../types';
 import { api } from '../services/api';
@@ -14,6 +14,7 @@ export const SmonView: React.FC<SmonViewProps> = ({ lang, onOpenPublicStatus }) 
   const [targets, setTargets] = useState<SmonTarget[]>([]);
   const [loading, setLoading] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
 
   // New Target Form
   const [name, setName] = useState('');
@@ -60,6 +61,22 @@ export const SmonView: React.FC<SmonViewProps> = ({ lang, onOpenPublicStatus }) 
     }
   };
 
+  const handleDeleteTarget = async (targetId: number, targetName: string) => {
+    if (!window.confirm(`Ви дійсно бажаєте видалити ціль моніторингу "${targetName}"?`)) {
+      return;
+    }
+
+    setDeletingId(targetId);
+    try {
+      await api.deleteSmonTarget(targetId);
+      loadTargets();
+    } catch (e: any) {
+      alert(`Помилка видалення: ${e.response?.data?.detail || e.message}`);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -75,100 +92,113 @@ export const SmonView: React.FC<SmonViewProps> = ({ lang, onOpenPublicStatus }) 
           {onOpenPublicStatus && (
             <button
               onClick={onOpenPublicStatus}
-              className="px-3.5 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-cyan-300 font-medium text-xs border border-gray-700 flex items-center space-x-1.5 transition"
+              className="px-3.5 py-2 rounded-xl bg-gray-900 hover:bg-gray-800 text-xs font-mono text-cyan-300 border border-gray-800 flex items-center space-x-1.5 transition"
             >
-              <Globe className="w-4 h-4 text-cyan-400" />
-              <span>Public Status Page</span>
-              <ExternalLink className="w-3 h-3 text-gray-500" />
+              <ExternalLink className="w-4 h-4" />
+              <span>Публічна Status Page</span>
             </button>
           )}
 
           <button
             onClick={() => setShowAddModal(true)}
-            className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-black font-bold text-xs shadow-lg shadow-emerald-950/50 flex items-center space-x-1.5 transition"
+            className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-black font-semibold text-xs rounded-xl shadow-lg shadow-emerald-950/50 flex items-center space-x-2 transition"
           >
             <Plus className="w-4 h-4" />
-            <span>{t.add_target}</span>
+            <span>Додати Монітор</span>
           </button>
         </div>
       </div>
 
-      {/* Summary KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-        <div className="glass-panel p-4 rounded-2xl border border-gray-800 space-y-1">
-          <div className="text-xs text-gray-400">Загальний Uptime (30d)</div>
-          <div className="text-2xl font-bold text-emerald-400 font-mono">99.98%</div>
-        </div>
-        <div className="glass-panel p-4 rounded-2xl border border-gray-800 space-y-1">
-          <div className="text-xs text-gray-400">Активні Монітори</div>
-          <div className="text-2xl font-bold text-white font-mono">{targets.length}</div>
-        </div>
-        <div className="glass-panel p-4 rounded-2xl border border-gray-800 space-y-1">
-          <div className="text-xs text-gray-400">Середній Час Відповіді</div>
-          <div className="text-2xl font-bold text-cyan-300 font-mono">24.5 ms</div>
-        </div>
-        <div className="glass-panel p-4 rounded-2xl border border-gray-800 space-y-1">
-          <div className="text-xs text-gray-400">SSL Сертифікати у нормі</div>
-          <div className="text-2xl font-bold text-purple-400 font-mono">100%</div>
-        </div>
-      </div>
-
-      {/* Targets Table */}
-      <div className="glass-panel rounded-2xl overflow-hidden border border-gray-800">
-        <div className="p-4 bg-gray-900/40 border-b border-gray-800 flex items-center justify-between">
-          <span className="text-xs font-bold text-white uppercase tracking-wider">Список Цілей Моніторингу</span>
-          <button onClick={loadTargets} className="text-gray-400 hover:text-cyan-400">
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+      {/* Targets Table or Empty State */}
+      {targets.length === 0 ? (
+        <div className="glass-panel p-12 rounded-2xl border border-gray-800 text-center space-y-4">
+          <div className="w-16 h-16 rounded-2xl bg-emerald-950/60 border border-emerald-800/80 mx-auto flex items-center justify-center text-emerald-400">
+            <Radio className="w-8 h-8" />
+          </div>
+          <div className="space-y-1 max-w-md mx-auto">
+            <h3 className="font-bold text-white text-base">Немає активних цілей моніторингу</h3>
+            <p className="text-xs text-gray-400">
+              Додайте першу ціль (HTTP/HTTPS URL, SSL сертифікат, Ping або TCP порт) для автоматичного моніторингу SLA та оповіщень.
+            </p>
+          </div>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs rounded-xl shadow-lg shadow-emerald-950/50 inline-flex items-center space-x-2 transition"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Додати Перший Монітор</span>
           </button>
         </div>
+      ) : (
+        <div className="glass-panel rounded-2xl overflow-hidden border border-gray-800">
+          <div className="p-4 border-b border-gray-800/80 flex items-center justify-between">
+            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+              Цілі Моніторингу ({targets.length})
+            </span>
+            <button onClick={loadTargets} className="text-gray-400 hover:text-cyan-400">
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
 
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="border-b border-gray-800 bg-gray-900/60 text-xs font-semibold text-gray-400 uppercase tracking-wider">
-              <th className="p-4">Ціль (Назва)</th>
-              <th className="p-4">Тип / Адреса</th>
-              <th className="p-4">Стан (Live Status)</th>
-              <th className="p-4">Час Відповіді</th>
-              <th className="p-4">Uptime SLA</th>
-              <th className="p-4 text-right">Інтервал</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-800/60 text-sm font-mono">
-            {targets.map((t) => (
-              <tr key={t.id} className="hover:bg-gray-800/30 transition">
-                <td className="p-4 font-bold text-white">
-                  <div className="flex items-center space-x-2">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                    <span>{t.name}</span>
-                  </div>
-                </td>
-                <td className="p-4">
-                  <div className="text-xs font-mono text-cyan-300">{t.host_or_url}</div>
-                  <span className="text-[10px] uppercase font-bold text-purple-400">{t.target_type}</span>
-                </td>
-                <td className="p-4">
-                  <span className={`px-2.5 py-1 rounded text-xs font-bold ${
-                    t.latest_status === 'UP' ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' :
-                    t.latest_status === 'WARNING' ? 'bg-amber-950 text-amber-400 border border-amber-800' :
-                    'bg-rose-950 text-rose-400 border border-rose-800'
-                  }`}>
-                    {t.latest_status}
-                  </span>
-                </td>
-                <td className="p-4">
-                  <span className="text-cyan-300 font-bold">{t.latest_response_time} ms</span>
-                </td>
-                <td className="p-4">
-                  <span className="text-emerald-400 font-bold">{t.uptime_percentage || 99.98}%</span>
-                </td>
-                <td className="p-4 text-right text-gray-400 text-xs">
-                  кожнi {t.check_interval}s
-                </td>
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b border-gray-800 bg-gray-900/60 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                <th className="p-4">Ціль (Назва)</th>
+                <th className="p-4">Тип / Адреса</th>
+                <th className="p-4">Стан (Live Status)</th>
+                <th className="p-4">Час Відповіді</th>
+                <th className="p-4">Uptime SLA</th>
+                <th className="p-4">Інтервал</th>
+                <th className="p-4 text-right">Дії</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody className="divide-y divide-gray-800/60 text-sm font-mono">
+              {targets.map((t) => (
+                <tr key={t.id} className="hover:bg-gray-800/30 transition">
+                  <td className="p-4 font-bold text-white">
+                    <div className="flex items-center space-x-2">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      <span>{t.name}</span>
+                    </div>
+                  </td>
+                  <td className="p-4">
+                    <div className="text-xs font-mono text-cyan-300">{t.host_or_url}</div>
+                    <span className="text-[10px] uppercase font-bold text-purple-400">{t.target_type}</span>
+                  </td>
+                  <td className="p-4">
+                    <span className={`px-2.5 py-1 rounded text-xs font-bold ${
+                      t.latest_status === 'UP' ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' :
+                      t.latest_status === 'WARNING' ? 'bg-amber-950 text-amber-400 border border-amber-800' :
+                      'bg-rose-950 text-rose-400 border border-rose-800'
+                    }`}>
+                      {t.latest_status || 'CHECKING'}
+                    </span>
+                  </td>
+                  <td className="p-4">
+                    <span className="text-cyan-300 font-bold">{t.latest_response_time || 0} ms</span>
+                  </td>
+                  <td className="p-4">
+                    <span className="text-emerald-400 font-bold">{t.uptime_percentage || 99.98}%</span>
+                  </td>
+                  <td className="p-4 text-gray-400 text-xs">
+                    кожнi {t.check_interval}s
+                  </td>
+                  <td className="p-4 text-right">
+                    <button
+                      onClick={() => handleDeleteTarget(t.id, t.name)}
+                      disabled={deletingId === t.id}
+                      title="Видалити монітор"
+                      className="p-1.5 rounded-lg bg-gray-800 hover:bg-rose-950 text-gray-400 hover:text-rose-400 border border-gray-700 hover:border-rose-800 transition"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* Add Modal */}
       {showAddModal && (
@@ -200,48 +230,16 @@ export const SmonView: React.FC<SmonViewProps> = ({ lang, onOpenPublicStatus }) 
                     onChange={(e) => setTargetType(e.target.value)}
                     className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-emerald-300 outline-none font-mono"
                   >
-                    <option value="http">HTTP / HTTPS URL</option>
-                    <option value="ssl">SSL Certificate Expiry</option>
-                    <option value="tcp">TCP Port Probe</option>
+                    <option value="http">HTTP / REST API</option>
+                    <option value="https">HTTPS / TLS Endpoint</option>
+                    <option value="tcp">TCP Socket Port</option>
                     <option value="ping">ICMP Ping</option>
+                    <option value="ssl">SSL Certificate Expiration</option>
                   </select>
                 </div>
 
                 <div>
-                  <label className="text-gray-400 block mb-1">Очікуваний HTTP Код</label>
-                  <input
-                    type="number"
-                    value={expectedCode}
-                    onChange={(e) => setExpectedCode(Number(e.target.value))}
-                    className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white outline-none font-mono"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-gray-400 block mb-1">Хост або URL</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="https://api.example.com/health"
-                  value={hostOrUrl}
-                  onChange={(e) => setHostOrUrl(e.target.value)}
-                  className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white outline-none focus:border-emerald-400 font-mono"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-gray-400 block mb-1">Порт</label>
-                  <input
-                    type="number"
-                    value={port}
-                    onChange={(e) => setPort(Number(e.target.value))}
-                    className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white outline-none font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="text-gray-400 block mb-1">Інтервал (сек)</label>
+                  <label className="text-gray-400 block mb-1">Інтервал (секунди)</label>
                   <input
                     type="number"
                     value={checkInterval}
@@ -251,17 +249,53 @@ export const SmonView: React.FC<SmonViewProps> = ({ lang, onOpenPublicStatus }) 
                 </div>
               </div>
 
-              <div className="flex justify-end space-x-2 pt-2">
+              <div>
+                <label className="text-gray-400 block mb-1">Хост / URL / IP</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="https://api.uaproxy.local/healthz або 192.168.1.100"
+                  value={hostOrUrl}
+                  onChange={(e) => setHostOrUrl(e.target.value)}
+                  className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white outline-none font-mono"
+                />
+              </div>
+
+              {targetType === 'tcp' && (
+                <div>
+                  <label className="text-gray-400 block mb-1">TCP Порт</label>
+                  <input
+                    type="number"
+                    value={port}
+                    onChange={(e) => setPort(Number(e.target.value))}
+                    className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white outline-none font-mono"
+                  />
+                </div>
+              )}
+
+              {(targetType === 'http' || targetType === 'https') && (
+                <div>
+                  <label className="text-gray-400 block mb-1">Очікуваний HTTP Код</label>
+                  <input
+                    type="number"
+                    value={expectedCode}
+                    onChange={(e) => setExpectedCode(Number(e.target.value))}
+                    className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white outline-none font-mono"
+                  />
+                </div>
+              )}
+
+              <div className="flex justify-end space-x-3 pt-4">
                 <button
                   type="button"
                   onClick={() => setShowAddModal(false)}
-                  className="px-4 py-2 rounded-lg bg-gray-800 text-gray-300 text-xs"
+                  className="px-4 py-2 rounded-lg bg-gray-800 text-gray-300"
                 >
                   Скасувати
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs transition"
+                  className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-bold transition"
                 >
                   Зберегти Монітор
                 </button>

@@ -19,14 +19,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ lang, servers, met
 
   const haproxyCount = servers.filter(s => s.has_haproxy).length;
   const nginxCount = servers.filter(s => s.has_nginx).length;
+  const onlineCount = servers.filter(s => s.ssh_status === 'ONLINE').length;
 
   useEffect(() => {
     loadTimeseries();
   }, [period, servers]);
 
   const loadTimeseries = async () => {
+    if (servers.length === 0) {
+      setTimeseriesData(null);
+      return;
+    }
     try {
-      const serverId = servers[0]?.id || 1;
+      const serverId = servers[0].id;
       const res = await api.getTimeseriesMetrics(serverId, period);
       setTimeseriesData(res);
     } catch (e) {
@@ -68,7 +73,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ lang, servers, met
           </div>
           <div className="mt-3 flex items-baseline justify-between">
             <span className="text-3xl font-bold text-white">{servers.length}</span>
-            <span className="text-xs text-emerald-400 font-mono">100% Online</span>
+            <span className={`text-xs font-mono ${servers.length > 0 && onlineCount === servers.length ? 'text-emerald-400' : 'text-amber-400'}`}>
+              {servers.length === 0 ? '0 Servers' : `${onlineCount}/${servers.length} Online`}
+            </span>
           </div>
         </div>
 
