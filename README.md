@@ -88,20 +88,20 @@ docker compose up -d --build
 
 ```mermaid
 graph TD
-    Client[Web Browser / DevOps Engineer] -->|HTTP / WebSocket| Frontend[React 18 + Tailwind UI :3000]
-    Frontend -->|Reverse Proxy / Nginx| Backend[FastAPI Backend :8000]
+    Client["Web Browser / DevOps Engineer"] -->|"HTTP / WebSocket"| Frontend["React 18 + Tailwind UI (:3000)"]
+    Frontend -->|"Reverse Proxy / Nginx"| Backend["FastAPI Backend (:8000)"]
     
-    Backend -->|Async SQLAlchemy| DB[(PostgreSQL 16)]
-    Backend -->|Pub/Sub & Cache| Redis[(Redis 7)]
+    Backend -->|"Async SQLAlchemy"| DB[("PostgreSQL 16")]
+    Backend -->|"Pub/Sub & Cache"| Redis[("Redis 7")]
     
-    Backend -->|AsyncSSH / SFTP| Node1[HAProxy / Nginx Server 01]
-    Backend -->|AsyncSSH / SFTP| Node2[HAProxy / Keepalived Server 02]
+    Backend -->|"AsyncSSH / SFTP"| Node1["HAProxy / Nginx Server 01"]
+    Backend -->|"AsyncSSH / SFTP"| Node2["HAProxy / Keepalived Server 02"]
     
-    Node1 -->|UNIX Socket| HASock1[/var/run/haproxy.sock]
-    Node1 -->|SPOE Agent| Coraza[Coraza WAF / ModSecurity Engine]
-    Node1 -->|Prometheus Scrape :9101| Prom[Prometheus Monitor]
+    Node1 -->|"UNIX Socket"| HASock1["/var/run/haproxy.sock"]
+    Node1 -->|"SPOE Agent"| Coraza["Coraza WAF / ModSecurity Engine"]
+    Node1 -->|"Prometheus Scrape (:9101)"| Prom["Prometheus Monitor"]
     
-    Backend -->|Alert Dispatch| Telegram[Telegram Bot / Slack / Discord]
+    Backend -->|"Alert Dispatch"| Telegram["Telegram Bot / Slack / Discord"]
 ```
 
 ---
