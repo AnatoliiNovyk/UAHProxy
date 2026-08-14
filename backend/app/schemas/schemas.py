@@ -164,7 +164,7 @@ class MaxconnUpdateRequest(BaseModel):
 # --- SMON Schemas ---
 class SmonTargetCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=128)
-    target_type: str = Field(..., pattern=r"^(http|ping|tcp|ssl)$")
+    target_type: str = Field(..., pattern=r"^(http|https|ping|tcp|ssl)$")
     host_or_url: str
     port: Optional[int] = Field(None, ge=1, le=65535)
     check_interval: int = Field(30, ge=5, le=3600)

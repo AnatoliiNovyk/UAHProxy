@@ -8,13 +8,24 @@ logger = logging.getLogger("uaproxy.ssh")
 
 class SSHService:
     @staticmethod
+    def _prepare_auth(server: Server):
+        password = decrypt_secret(server.encrypted_ssh_password) if server.encrypted_ssh_password else None
+        client_keys = None
+        if server.encrypted_ssh_key:
+            raw_key = decrypt_secret(server.encrypted_ssh_key)
+            try:
+                client_keys = [asyncssh.import_private_key(raw_key)]
+            except Exception:
+                client_keys = [raw_key]
+        return password, client_keys
+
+    @staticmethod
     async def execute_command(server: Server, command: str) -> Tuple[int, str, str]:
         """
         Executes command on remote server via SSH.
         Returns: (exit_code, stdout, stderr)
         """
-        password = decrypt_secret(server.encrypted_ssh_password) if server.encrypted_ssh_password else None
-        client_keys = [decrypt_secret(server.encrypted_ssh_key)] if server.encrypted_ssh_key else None
+        password, client_keys = SSHService._prepare_auth(server)
 
         try:
             async with asyncssh.connect(
@@ -36,8 +47,7 @@ class SSHService:
     @staticmethod
     async def write_remote_file(server: Server, remote_path: str, content: str) -> bool:
         """Writes content to remote file via SFTP over SSH"""
-        password = decrypt_secret(server.encrypted_ssh_password) if server.encrypted_ssh_password else None
-        client_keys = [decrypt_secret(server.encrypted_ssh_key)] if server.encrypted_ssh_key else None
+        password, client_keys = SSHService._prepare_auth(server)
 
         try:
             async with asyncssh.connect(
@@ -60,8 +70,7 @@ class SSHService:
     @staticmethod
     async def read_remote_file(server: Server, remote_path: str) -> Optional[str]:
         """Reads content from remote file via SFTP"""
-        password = decrypt_secret(server.encrypted_ssh_password) if server.encrypted_ssh_password else None
-        client_keys = [decrypt_secret(server.encrypted_ssh_key)] if server.encrypted_ssh_key else None
+        password, client_keys = SSHService._prepare_auth(server)
 
         try:
             async with asyncssh.connect(

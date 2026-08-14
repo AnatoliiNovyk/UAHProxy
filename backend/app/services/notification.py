@@ -33,6 +33,7 @@ class NotificationService:
 
                 payload = {
                     "text": f"*{title}*\n{message}",
+                    "content": f"**{title}**\n{message}",
                     "username": "UAProxy Alert Bot"
                 }
                 async with httpx.AsyncClient(timeout=10.0) as client:

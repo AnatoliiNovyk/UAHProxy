@@ -29,9 +29,12 @@ class SmonCheckerService:
         response_time_ms = 0.0
 
         try:
-            if target.target_type == "http":
+            if target.target_type in ("http", "https"):
+                url = target.host_or_url
+                if not url.startswith("http://") and not url.startswith("https://"):
+                    url = f"{target.target_type}://{url}"
                 async with httpx.AsyncClient(verify=False, timeout=5.0) as client:
-                    resp = await client.get(target.host_or_url)
+                    resp = await client.get(url)
                     response_time_ms = round((time.time() - start_time) * 1000, 2)
                     if resp.status_code == target.expected_status_code:
                         status = "UP"
