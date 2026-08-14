@@ -1,7 +1,8 @@
-import React from 'react';
-import { Server as ServerIcon, ShieldCheck, Radio, AlertTriangle, Cpu, HardDrive, Activity, ArrowUpRight } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Server as ServerIcon, ShieldCheck, Radio, AlertTriangle, Cpu, HardDrive, Activity, ArrowUpRight, TrendingUp, BarChart2, Clock } from 'lucide-react';
 import { Language, translations } from '../i18n/translations';
 import { Server, LiveMetrics, SmonTarget } from '../types';
+import { api } from '../services/api';
 
 interface DashboardViewProps {
   lang: Language;
@@ -13,10 +14,25 @@ interface DashboardViewProps {
 
 export const DashboardView: React.FC<DashboardViewProps> = ({ lang, servers, metrics, smonTargets, onNavigate }) => {
   const t = translations[lang];
+  const [period, setPeriod] = useState<'1h' | '24h' | '7d'>('24h');
+  const [timeseriesData, setTimeseriesData] = useState<any>(null);
 
   const haproxyCount = servers.filter(s => s.has_haproxy).length;
   const nginxCount = servers.filter(s => s.has_nginx).length;
-  const keepalivedCount = servers.filter(s => s.has_keepalived).length;
+
+  useEffect(() => {
+    loadTimeseries();
+  }, [period, servers]);
+
+  const loadTimeseries = async () => {
+    try {
+      const serverId = servers[0]?.id || 1;
+      const res = await api.getTimeseriesMetrics(serverId, period);
+      setTimeseriesData(res);
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -29,13 +45,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ lang, servers, met
               UAProxy Infrastructure Control Center
             </h1>
             <p className="text-gray-400 text-sm">
-              Управління HAProxy, Nginx, Apache, Keepalived, SMON моніторингом та алертами у реальному часі.
+              Управління HAProxy, Nginx, Keepalived VRRP, WAF, SMON та Prometheus метриками у реальному часі.
             </p>
           </div>
           <div className="flex items-center space-x-3">
             <button
               onClick={() => onNavigate('installer')}
-              className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-black font-semibold text-sm shadow-lg shadow-cyan-950/50 flex items-center space-x-2 transition"
+              className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-black font-semibold text-sm shadow-lg shadow-cyan-950/50 flex items-center space-x-2 transition"
             >
               <span>+ {t.install_service}</span>
             </button>
@@ -90,13 +106,74 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ lang, servers, met
         </div>
       </div>
 
+      {/* Prometheus Time-Series Performance Chart */}
+      <div className="glass-panel p-6 rounded-2xl space-y-4 border border-gray-800">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-800 pb-3">
+          <div className="flex items-center space-x-2">
+            <BarChart2 className="w-5 h-5 text-cyan-400" />
+            <div>
+              <h2 className="text-sm font-bold text-white">Prometheus Live Time-Series Analytics (RPS & Latency)</h2>
+              <p className="text-xs text-gray-400 font-mono">
+                Avg: <span className="text-cyan-300 font-bold">{timeseriesData?.summary?.avg_rps} req/s</span> • Peak: <span className="text-purple-400 font-bold">{timeseriesData?.summary?.peak_rps} req/s</span> • Latency: <span className="text-emerald-400 font-bold">{timeseriesData?.summary?.avg_latency_ms} ms</span>
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center space-x-1 bg-gray-900 p-1 rounded-xl border border-gray-800 text-xs font-mono">
+            {(['1h', '24h', '7d'] as const).map((p) => (
+              <button
+                key={p}
+                onClick={() => setPeriod(p)}
+                className={`px-3 py-1 rounded-lg font-bold transition ${
+                  period === p ? 'bg-cyan-500 text-black shadow-md shadow-cyan-950/50' : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Visual Wave Chart */}
+        <div className="h-40 flex items-end gap-1 pt-4 px-2 bg-[#090C12] rounded-xl border border-gray-800/80">
+          {timeseriesData?.points?.map((pt: any, idx: number) => {
+            const heightPercent = Math.min(100, Math.max(15, (pt.rps / (timeseriesData.summary.peak_rps || 1500)) * 100));
+            return (
+              <div
+                key={idx}
+                className="flex-1 group relative flex flex-col items-center justify-end h-full"
+              >
+                {/* Tooltip */}
+                <div className="opacity-0 group-hover:opacity-100 absolute bottom-full mb-2 bg-gray-950 text-cyan-300 text-[10px] font-mono px-2 py-1 rounded border border-gray-700 whitespace-nowrap pointer-events-none transition z-20 shadow-lg">
+                  <div>{pt.timestamp}</div>
+                  <div className="font-bold">{pt.rps} req/s</div>
+                  <div className="text-emerald-400">{pt.latency_ms} ms</div>
+                </div>
+
+                {/* Bar */}
+                <div
+                  style={{ height: `${heightPercent}%` }}
+                  className="w-full bg-gradient-to-t from-cyan-600/50 via-cyan-400 to-purple-400 rounded-t group-hover:from-cyan-400 group-hover:to-white transition-all cursor-pointer"
+                />
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="flex items-center justify-between text-[10px] text-gray-500 font-mono pt-1">
+          <span>{timeseriesData?.points?.[0]?.timestamp || 'Start'}</span>
+          <span>{timeseriesData?.points?.[Math.floor((timeseriesData?.points?.length || 2) / 2)]?.timestamp || 'Mid'}</span>
+          <span>{timeseriesData?.points?.[timeseriesData?.points?.length - 1]?.timestamp || 'Now'}</span>
+        </div>
+      </div>
+
       {/* Realtime Live Load Widgets */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="glass-panel p-6 rounded-2xl lg:col-span-2 space-y-4">
           <div className="flex items-center justify-between border-b border-gray-800 pb-3">
             <div className="flex items-center space-x-2">
               <Activity className="w-5 h-5 text-cyan-400" />
-              <h2 className="font-semibold text-white">Live Cluster Throughput</h2>
+              <h2 className="font-semibold text-white">Live Cluster Utilization (Node Exporter)</h2>
             </div>
             <span className="text-xs font-mono text-cyan-400 bg-cyan-950 px-2.5 py-1 rounded-md border border-cyan-800">
               {metrics ? `${metrics.total_requests.toLocaleString()} req/s` : '14,230 req/s'}
@@ -151,29 +228,29 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ lang, servers, met
             >
               <div>
                 <div className="text-xs font-semibold text-cyan-300 group-hover:text-cyan-200">HAProxy Runtime Control</div>
-                <div className="text-[11px] text-gray-400">Drain / Disable / Change weights dynamically</div>
+                <div className="text-[11px] text-gray-400">Drain / Disable / Stick-tables / Maps</div>
               </div>
               <ArrowUpRight className="w-4 h-4 text-gray-500 group-hover:text-cyan-400" />
             </button>
 
             <button
-              onClick={() => onNavigate('configs')}
+              onClick={() => onNavigate('clusters')}
               className="w-full p-3 rounded-xl bg-gray-900/80 hover:bg-gray-800 border border-gray-800 flex items-center justify-between text-left group transition"
             >
               <div>
-                <div className="text-xs font-semibold text-purple-300 group-hover:text-purple-200">Config Diff & Rollback</div>
-                <div className="text-[11px] text-gray-400">Compare versions and test syntax</div>
+                <div className="text-xs font-semibold text-purple-300 group-hover:text-purple-200">Keepalived VRRP Clusters</div>
+                <div className="text-[11px] text-gray-400">High availability VIP failover pairs</div>
               </div>
               <ArrowUpRight className="w-4 h-4 text-gray-500 group-hover:text-purple-400" />
             </button>
 
             <button
-              onClick={() => onNavigate('smon')}
+              onClick={() => onNavigate('ssl_waf')}
               className="w-full p-3 rounded-xl bg-gray-900/80 hover:bg-gray-800 border border-gray-800 flex items-center justify-between text-left group transition"
             >
               <div>
-                <div className="text-xs font-semibold text-emerald-300 group-hover:text-emerald-200">SMON Targets & SSL Checks</div>
-                <div className="text-[11px] text-gray-400">Public status page & cert expiration</div>
+                <div className="text-xs font-semibold text-emerald-300 group-hover:text-emerald-200">SSL & WAF (OWASP CRS)</div>
+                <div className="text-[11px] text-gray-400">Let's Encrypt & Layer 7 attack filtering</div>
               </div>
               <ArrowUpRight className="w-4 h-4 text-gray-500 group-hover:text-emerald-400" />
             </button>

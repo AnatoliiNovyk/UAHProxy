@@ -2,7 +2,7 @@ from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
-# --- Auth Schemas ---
+# --- Auth & RBAC Schemas ---
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -19,6 +19,7 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str
     role: str = "admin"
+    group_id: Optional[int] = None
 
 class UserOut(BaseModel):
     id: int
@@ -26,7 +27,21 @@ class UserOut(BaseModel):
     email: str
     role: str
     is_active: bool
+    group_id: Optional[int] = None
     created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class ServerGroupCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+class ServerGroupOut(BaseModel):
+    id: int
+    name: str
+    description: Optional[str] = None
+    server_count: Optional[int] = 0
 
     class Config:
         from_attributes = True
@@ -43,6 +58,7 @@ class ServerCreate(BaseModel):
     has_nginx: bool = False
     has_apache: bool = False
     has_keepalived: bool = False
+    group_id: Optional[int] = None
 
 class ServerOut(BaseModel):
     id: int
@@ -55,6 +71,7 @@ class ServerOut(BaseModel):
     has_apache: bool
     has_keepalived: bool
     has_exporter: bool
+    group_id: Optional[int] = None
     created_at: datetime
 
     class Config:
@@ -148,7 +165,7 @@ class MaxconnUpdateRequest(BaseModel):
 # --- SMON Schemas ---
 class SmonTargetCreate(BaseModel):
     name: str
-    target_type: str = "http" # http, ping, tcp, ssl
+    target_type: str # http, ping, tcp, ssl
     host_or_url: str
     port: Optional[int] = None
     check_interval: int = 30
@@ -238,6 +255,20 @@ class WAFConfigUpdateRequest(BaseModel):
     server_id: int
     mode: str = "BLOCKING" # DISABLED, DETECTION_ONLY, BLOCKING
     rules: Dict[str, bool]
+
+# --- GeoIP Schemas ---
+class GeoIPRuleApplyRequest(BaseModel):
+    server_id: int
+    mode: str = "BLOCKLIST" # BLOCKLIST, ALLOWLIST
+    country_codes: List[str]
+
+# --- Metrics Schemas ---
+class TimeSeriesMetricsOut(BaseModel):
+    server_id: int
+    hostname: str
+    period: str
+    summary: Dict[str, Any]
+    points: List[Dict[str, Any]]
 
 # --- Audit & Alerts ---
 class AlertChannelCreate(BaseModel):

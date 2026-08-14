@@ -4,9 +4,29 @@ import { Server, ConfigHistory, HAProxyStat, SmonTarget, Cluster, AuditLog, Live
 const API_BASE = '/api/v1';
 
 export const api = {
-  // Auth
+  // Auth & RBAC Users
   login: async (username: string, password: string) => {
     const res = await axios.post(`${API_BASE}/auth/login`, { username, password });
+    return res.data;
+  },
+
+  getUsers: async () => {
+    const res = await axios.get(`${API_BASE}/users`);
+    return res.data;
+  },
+
+  createUser: async (data: { username: string; email: string; password: string; role: string; group_id?: number }) => {
+    const res = await axios.post(`${API_BASE}/users`, data);
+    return res.data;
+  },
+
+  getServerGroups: async () => {
+    const res = await axios.get(`${API_BASE}/rbac/groups`);
+    return res.data;
+  },
+
+  createServerGroup: async (data: { name: string; description?: string }) => {
+    const res = await axios.post(`${API_BASE}/rbac/groups`, data);
     return res.data;
   },
 
@@ -28,6 +48,28 @@ export const api = {
 
   installService: async (serverId: number, serviceName: string) => {
     const res = await axios.post(`${API_BASE}/servers/${serverId}/install-service?service_name=${serviceName}`);
+    return res.data;
+  },
+
+  // Metrics & Prometheus
+  getTimeseriesMetrics: async (serverId: number, period: string = '24h') => {
+    const res = await axios.get(`${API_BASE}/metrics/${serverId}/timeseries?period=${period}`);
+    return res.data;
+  },
+
+  getPrometheusConfig: async () => {
+    const res = await axios.get(`${API_BASE}/metrics/prometheus-config`);
+    return res.data;
+  },
+
+  // GeoIP Filtering
+  getGeoIPStatus: async () => {
+    const res = await axios.get(`${API_BASE}/geoip/status`);
+    return res.data;
+  },
+
+  applyGeoIPRules: async (data: { server_id: number; mode: string; country_codes: string[] }) => {
+    const res = await axios.post(`${API_BASE}/geoip/rules`, data);
     return res.data;
   },
 

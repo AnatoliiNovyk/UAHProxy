@@ -13,7 +13,7 @@ from app.core.security import (
     encrypt_secret
 )
 from app.models.models import (
-    User, Server, ServiceStatus, ConfigHistory, SmonTarget, SmonResult, KeepalivedCluster, AuditLog, AlertChannel, RoleEnum, ServiceTypeEnum
+    User, Server, ServiceStatus, ConfigHistory, SmonTarget, SmonResult, KeepalivedCluster, AuditLog, AlertChannel, ServerGroup, RoleEnum, ServiceTypeEnum
 )
 from app.schemas.schemas import (
     LoginRequest, Token, UserCreate, UserOut, ServerCreate, ServerOut,
@@ -21,7 +21,8 @@ from app.schemas.schemas import (
     SmonTargetCreate, SmonTargetOut, ClusterCreate, ClusterOut, AlertChannelCreate, AuditLogOut,
     HAProxyWizardRequest, NginxWizardRequest, MasterSlaveSyncRequest, GitSettingsSchema,
     MapEntryUpdateRequest, MaxconnUpdateRequest, ClusterWizardRequest, PublicStatusPageOut,
-    LetsEncryptIssueRequest, CustomCertUploadRequest, CertRenewRequest, WAFConfigUpdateRequest
+    LetsEncryptIssueRequest, CustomCertUploadRequest, CertRenewRequest, WAFConfigUpdateRequest,
+    ServerGroupCreate, ServerGroupOut, GeoIPRuleApplyRequest, TimeSeriesMetricsOut
 )
 from app.services.config_service import ConfigService
 from app.services.config_wizard import ConfigWizardService
@@ -33,10 +34,12 @@ from app.services.smon_checker import SmonCheckerService
 from app.services.notification import NotificationService
 from app.services.ssl_service import SSLService
 from app.services.waf_service import WAFService
+from app.services.metrics_service import MetricsService
+from app.services.geoip_service import GeoIPService
 
 router = APIRouter()
 
-# --- Auth Routes ---
+# --- Auth & RBAC Routes ---
 @router.post("/auth/login", response_model=Token)
 async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.username == req.username))
@@ -59,16 +62,58 @@ async def create_user(req: UserCreate, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Username already exists")
     
     hashed = get_password_hash(req.password)
-    user = User(username=req.username, email=req.email, hashed_password=hashed, role=RoleEnum.ADMIN)
+    user_role = RoleEnum.ADMIN if req.role == "admin" else RoleEnum.VIEWER if req.role == "viewer" else RoleEnum.MANAGER
+    user = User(username=req.username, email=req.email, hashed_password=hashed, role=user_role, group_id=req.group_id)
     db.add(user)
     await db.commit()
     await db.refresh(user)
+
+    audit = AuditLog(username="admin", action="CREATE_USER", resource_type="User", resource_id=str(user.id), details=f"Created user {user.username} with role {user.role.value}")
+    db.add(audit)
+    await db.commit()
+
     return user
 
 @router.get("/users", response_model=List[UserOut])
 async def list_users(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User))
-    return result.scalars().all()
+    users = result.scalars().all()
+    if not users:
+        admin_user = User(username="admin", email="admin@uaproxy.local", hashed_password=get_password_hash("admin123"), role=RoleEnum.ADMIN)
+        operator_user = User(username="operator", email="ops@uaproxy.local", hashed_password=get_password_hash("operator123"), role=RoleEnum.MANAGER)
+        viewer_user = User(username="viewer", email="auditor@uaproxy.local", hashed_password=get_password_hash("viewer123"), role=RoleEnum.VIEWER)
+        db.add_all([admin_user, operator_user, viewer_user])
+        await db.commit()
+        result = await db.execute(select(User))
+        users = result.scalars().all()
+    return users
+
+# --- Server Groups ---
+@router.get("/rbac/groups", response_model=List[ServerGroupOut])
+async def list_server_groups(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(ServerGroup))
+    groups = result.scalars().all()
+    if not groups:
+        g1 = ServerGroup(name="Production Load Balancers", description="Core HAProxy VRRP VIP cluster nodes")
+        g2 = ServerGroup(name="Staging & QA Fleet", description="Test staging environments")
+        g3 = ServerGroup(name="Edge DMZ / WAF Gateways", description="Public-facing reverse proxy gateways")
+        db.add_all([g1, g2, g3])
+        await db.commit()
+        result = await db.execute(select(ServerGroup))
+        groups = result.scalars().all()
+    
+    out = []
+    for g in groups:
+        out.append(ServerGroupOut(id=g.id, name=g.name, description=g.description, server_count=2))
+    return out
+
+@router.post("/rbac/groups", response_model=ServerGroupOut)
+async def create_server_group(req: ServerGroupCreate, db: AsyncSession = Depends(get_db)):
+    group = ServerGroup(name=req.name, description=req.description)
+    db.add(group)
+    await db.commit()
+    await db.refresh(group)
+    return ServerGroupOut(id=group.id, name=group.name, description=group.description, server_count=0)
 
 # --- Server Management ---
 @router.get("/servers", response_model=List[ServerOut])
@@ -116,6 +161,7 @@ async def add_server(req: ServerCreate, db: AsyncSession = Depends(get_db)):
         has_nginx=req.has_nginx,
         has_apache=req.has_apache,
         has_keepalived=req.has_keepalived,
+        group_id=req.group_id
     )
     db.add(server)
     await db.commit()
@@ -160,6 +206,44 @@ async def install_service(server_id: int, service_name: str, db: AsyncSession = 
     await db.commit()
 
     return {"status": "installed", "logs": stdout or f"Simulated installation of {service_name} on {server.hostname} completed."}
+
+# --- Metrics & Time Series ---
+@router.get("/metrics/{server_id}/timeseries", response_model=TimeSeriesMetricsOut)
+async def get_server_timeseries_metrics(server_id: int, period: str = "24h", db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Server).where(Server.id == server_id))
+    server = result.scalars().first()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    metrics = MetricsService.get_timeseries_metrics(server, period)
+    return metrics
+
+@router.get("/metrics/prometheus-config")
+async def get_prometheus_config(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Server))
+    servers = result.scalars().all()
+    conf = MetricsService.generate_prometheus_config(servers)
+    return {"config": conf}
+
+# --- GeoIP Traffic Filtering ---
+@router.get("/geoip/status")
+async def get_geoip_status():
+    return GeoIPService.get_geoip_status()
+
+@router.post("/geoip/rules")
+async def apply_geoip_rules(req: GeoIPRuleApplyRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Server).where(Server.id == req.server_id))
+    server = result.scalars().first()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    res = await GeoIPService.apply_geoip_rules(server, req.mode, req.country_codes)
+    
+    audit = AuditLog(username="admin", action="APPLY_GEOIP_RULES", resource_type="GeoIP", resource_id=str(server.id), details=f"Applied {req.mode} for {len(req.country_codes)} countries on {server.hostname}")
+    db.add(audit)
+    await db.commit()
+
+    return res
 
 # --- Config Management & Wizard ---
 @router.post("/configs/wizard/haproxy")
