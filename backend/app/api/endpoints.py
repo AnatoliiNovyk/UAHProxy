@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from jose import JWTError, jwt
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import delete, or_, update
@@ -6,6 +8,7 @@ from sqlalchemy.orm import selectinload
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import (
     verify_password,
@@ -13,6 +16,7 @@ from app.core.security import (
     create_access_token,
     encrypt_secret
 )
+
 from app.models.models import (
     User, Server, ServiceStatus, ConfigHistory, SmonTarget, SmonResult, KeepalivedCluster, AuditLog, AlertChannel, ServerGroup, RoleEnum, ServiceTypeEnum, WafEvent
 )
@@ -25,6 +29,22 @@ from app.schemas.schemas import (
     LetsEncryptIssueRequest, CustomCertUploadRequest, CertRenewRequest, WAFConfigUpdateRequest,
     ServerGroupCreate, ServerGroupOut, GeoIPRuleApplyRequest, TimeSeriesMetricsOut
 )
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
+
+async def get_current_user(token: Optional[str] = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)) -> Optional[User]:
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            return None
+    except JWTError:
+        return None
+
+    result = await db.execute(select(User).where(User.username == username))
+    return result.scalars().first()
 from app.services.config_service import ConfigService
 from app.services.config_wizard import ConfigWizardService
 from app.services.git_service import GitService
@@ -55,6 +75,12 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
         username=user.username,
         role=user.role.value if hasattr(user.role, 'value') else str(user.role)
     )
+
+@router.get("/auth/me", response_model=UserOut)
+async def get_current_user_profile(current_user: Optional[User] = Depends(get_current_user)):
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Not authenticated or token expired")
+    return current_user
 
 @router.post("/users", response_model=UserOut)
 async def create_user(req: UserCreate, db: AsyncSession = Depends(get_db)):

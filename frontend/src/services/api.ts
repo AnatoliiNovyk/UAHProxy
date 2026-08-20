@@ -1,13 +1,36 @@
 import axios from 'axios';
-import { Server, ConfigHistory, HAProxyStat, SmonTarget, Cluster, AuditLog, LiveMetrics } from '../types';
+import { Server, ConfigHistory, HAProxyStat, SmonTarget, Cluster, AuditLog, LiveMetrics, User } from '../types';
 
 const API_BASE = '/api/v1';
+
+// Attach JWT Token if available
+axios.interceptors.request.use((config) => {
+  const token = localStorage.getItem('uaproxy_token');
+  if (token && config.headers) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
 
 export const api = {
   // Auth & RBAC Users
   login: async (username: string, password: string) => {
     const res = await axios.post(`${API_BASE}/auth/login`, { username, password });
+    if (res.data?.access_token) {
+      localStorage.setItem('uaproxy_token', res.data.access_token);
+      localStorage.setItem('uaproxy_user', JSON.stringify(res.data));
+    }
     return res.data;
+  },
+
+  getMe: async (): Promise<User> => {
+    const res = await axios.get(`${API_BASE}/auth/me`);
+    return res.data;
+  },
+
+  logout: () => {
+    localStorage.removeItem('uaproxy_token');
+    localStorage.removeItem('uaproxy_user');
   },
 
   getUsers: async () => {
@@ -322,7 +345,10 @@ export const api = {
   }
 };
 
-export const connectWebSocket = (onMessage: (metrics: LiveMetrics) => void) => {
+export const connectWebSocket = (
+  onMetrics?: (metrics: LiveMetrics) => void,
+  onSmonUpdate?: (target: any) => void
+) => {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsUrl = `${protocol}//${window.location.host}/ws/metrics`;
   const socket = new WebSocket(wsUrl);
@@ -330,8 +356,10 @@ export const connectWebSocket = (onMessage: (metrics: LiveMetrics) => void) => {
   socket.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
-      if (data.type === 'METRICS_UPDATE') {
-        onMessage(data.metrics);
+      if (data.type === 'METRICS_UPDATE' && onMetrics) {
+        onMetrics(data.metrics);
+      } else if (data.type === 'SMON_TARGET_UPDATE' && onSmonUpdate) {
+        onSmonUpdate(data.target);
       }
     } catch (e) {
       console.error('WS parse error', e);

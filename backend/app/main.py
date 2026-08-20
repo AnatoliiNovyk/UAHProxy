@@ -8,7 +8,9 @@ from app.core.database import init_db, get_session
 from app.core.security import get_password_hash
 from app.models.models import User, RoleEnum
 from app.api.endpoints import router as api_router
-from app.websockets.live_stream import ws_router
+import asyncio
+from app.websockets.live_stream import ws_router, metrics_broadcaster_task
+from app.services.smon_daemon import SmonDaemon
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("uaproxy")
@@ -34,7 +36,7 @@ async def on_startup():
     logger.info("Initializing UAProxy database and bootstrapping initial tables...")
     await init_db()
 
-    # Bootstrap Initial Superuser & Demo Servers
+    # Bootstrap Initial Superuser
     session = await get_session()
     try:
         result = await session.execute(select(User).where(User.username == settings.INITIAL_ADMIN_USERNAME))
@@ -54,6 +56,16 @@ async def on_startup():
         await session.commit()
     finally:
         await session.close()
+
+    # Start Background Daemons
+    SmonDaemon.get_instance().start()
+    asyncio.create_task(metrics_broadcaster_task())
+    logger.info("UAProxy Background Probers and Metrics Broadcasters launched successfully.")
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    SmonDaemon.get_instance().stop()
+    logger.info("UAProxy Background Services stopped.")
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
 app.include_router(ws_router)

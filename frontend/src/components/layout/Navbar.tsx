@@ -1,15 +1,30 @@
 import React from 'react';
-import { ShieldCheck, Globe, Bell, User, Cpu } from 'lucide-react';
+import { ShieldCheck, Globe, Bell, User, Cpu, LogOut } from 'lucide-react';
 import { Language, translations } from '../../i18n/translations';
+import { User as UserType } from '../../types';
 
 interface NavbarProps {
   lang: Language;
   setLang: (lang: Language) => void;
   activeAlerts: number;
+  currentUser?: UserType | null;
+  onLogout?: () => void;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ lang, setLang, activeAlerts }) => {
+export const Navbar: React.FC<NavbarProps> = ({ lang, setLang, activeAlerts, currentUser, onLogout }) => {
   const t = translations[lang];
+
+  const roleLabel = (role?: string) => {
+    if (role === 'admin') return 'SUPERADMIN';
+    if (role === 'manager') return 'OPERATOR';
+    return 'VIEWER';
+  };
+
+  const roleColor = (role?: string) => {
+    if (role === 'admin') return 'text-purple-400';
+    if (role === 'manager') return 'text-cyan-400';
+    return 'text-gray-400';
+  };
 
   return (
     <header className="h-16 glass-panel border-b border-gray-800 px-6 flex items-center justify-between sticky top-0 z-40">
@@ -37,7 +52,7 @@ export const Navbar: React.FC<NavbarProps> = ({ lang, setLang, activeAlerts }) =
         {/* Language Switcher */}
         <button
           onClick={() => setLang(lang === 'uk' ? 'en' : 'uk')}
-          className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-gray-800/60 hover:bg-gray-800 text-xs font-medium text-gray-300 border border-gray-700 transition"
+          className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-gray-800/60 hover:bg-gray-800 text-xs font-medium text-gray-300 border border-gray-700 transition cursor-pointer"
         >
           <Globe className="w-4 h-4 text-cyan-400" />
           <span>{lang === 'uk' ? 'UA 🇺🇦' : 'EN 🇬🇧'}</span>
@@ -55,15 +70,27 @@ export const Navbar: React.FC<NavbarProps> = ({ lang, setLang, activeAlerts }) =
           </button>
         </div>
 
-        {/* User Profile */}
-        <div className="flex items-center space-x-2 pl-3 border-l border-gray-800">
-          <div className="w-8 h-8 rounded-full bg-purple-950 border border-purple-700 text-purple-300 flex items-center justify-center font-bold text-xs">
-            AD
+        {/* User Profile & Logout */}
+        <div className="flex items-center space-x-3 pl-3 border-l border-gray-800">
+          <div className="w-8 h-8 rounded-full bg-purple-950 border border-purple-700 text-purple-300 flex items-center justify-center font-bold text-xs uppercase">
+            {currentUser?.username ? currentUser.username.substring(0, 2) : 'AD'}
           </div>
           <div className="hidden sm:block text-left">
-            <div className="text-xs font-semibold text-gray-200">admin</div>
-            <div className="text-[10px] text-cyan-400 font-mono">SUPERADMIN</div>
+            <div className="text-xs font-semibold text-gray-200">{currentUser?.username || 'admin'}</div>
+            <div className={`text-[10px] font-mono font-bold ${roleColor(currentUser?.role)}`}>
+              {roleLabel(currentUser?.role)}
+            </div>
           </div>
+
+          {onLogout && (
+            <button
+              onClick={onLogout}
+              title="Вийти з системи"
+              className="p-2 rounded-lg bg-gray-800/40 hover:bg-rose-950/80 text-gray-400 hover:text-rose-300 border border-gray-800 hover:border-rose-800/60 transition cursor-pointer"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
     </header>

@@ -86,3 +86,13 @@ export interface LiveMetrics {
   network_kbps: number;
   active_alerts: number;
 }
+
+export interface User {
+  id: number;
+  username: string;
+  email: string;
+  role: 'admin' | 'manager' | 'viewer' | string;
+  is_active: boolean;
+  group_id?: number;
+  created_at: string;
+}

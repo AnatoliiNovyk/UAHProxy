@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Radio, Plus, CheckCircle2, AlertTriangle, XCircle, RefreshCw, Globe, Shield, Activity, ExternalLink, Trash2 } from 'lucide-react';
 import { Language, translations } from '../i18n/translations';
 import { SmonTarget } from '../types';
-import { api } from '../services/api';
+import { api, connectWebSocket } from '../services/api';
 
 interface SmonViewProps {
   lang: Language;
@@ -26,6 +26,20 @@ export const SmonView: React.FC<SmonViewProps> = ({ lang, onOpenPublicStatus }) 
 
   useEffect(() => {
     loadTargets();
+
+    const unsubscribe = connectWebSocket(undefined, (updatedTarget) => {
+      setTargets((prev) => {
+        const exists = prev.some((t) => t.id === updatedTarget.id);
+        if (exists) {
+          return prev.map((t) =>
+            t.id === updatedTarget.id ? { ...t, ...updatedTarget } : t
+          );
+        }
+        return [...prev, updatedTarget];
+      });
+    });
+
+    return () => unsubscribe();
   }, []);
 
   const loadTargets = async () => {

@@ -12,14 +12,22 @@ import { SslWafView } from './views/SslWafView';
 import { AlertsAuditView } from './views/AlertsAuditView';
 import { SettingsView } from './views/SettingsView';
 import { PublicStatusPageView } from './views/PublicStatusPageView';
+import { LoginView } from './views/LoginView';
 
 import { Language } from './i18n/translations';
-import { Server, SmonTarget, LiveMetrics } from './types';
+import { Server, SmonTarget, LiveMetrics, User } from './types';
 import { api, connectWebSocket } from './services/api';
 
 export const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<string>('dashboard');
   const [lang, setLang] = useState<Language>('uk');
+
+  // Auth State
+  const [currentUser, setCurrentUser] = useState<User | null>(() => {
+    const cached = localStorage.getItem('uaproxy_user');
+    return cached ? JSON.parse(cached) : null;
+  });
+  const [authChecked, setAuthChecked] = useState(false);
 
   // Data States
   const [servers, setServers] = useState<Server[]>([]);
@@ -27,7 +35,7 @@ export const App: React.FC = () => {
   const [metrics, setMetrics] = useState<LiveMetrics | null>(null);
 
   useEffect(() => {
-    fetchInitialData();
+    checkAuthSession();
 
     const cleanupWs = connectWebSocket((liveMetrics) => {
       setMetrics(liveMetrics);
@@ -48,6 +56,28 @@ export const App: React.FC = () => {
     };
   }, []);
 
+  const checkAuthSession = async () => {
+    const token = localStorage.getItem('uaproxy_token');
+    if (!token) {
+      setCurrentUser(null);
+      setAuthChecked(true);
+      return;
+    }
+
+    try {
+      const user = await api.getMe();
+      setCurrentUser(user);
+      localStorage.setItem('uaproxy_user', JSON.stringify(user));
+      fetchInitialData();
+    } catch (e) {
+      console.warn('Session expired or invalid, please login again.');
+      api.logout();
+      setCurrentUser(null);
+    } finally {
+      setAuthChecked(true);
+    }
+  };
+
   const fetchInitialData = async () => {
     try {
       const results = await Promise.allSettled([
@@ -61,9 +91,24 @@ export const App: React.FC = () => {
     }
   };
 
-  // If user opens public status view directly
+  const handleLoginSuccess = (user: User) => {
+    setCurrentUser(user);
+    fetchInitialData();
+  };
+
+  const handleLogout = () => {
+    api.logout();
+    setCurrentUser(null);
+  };
+
+  // If user opens public status view directly, allow without authentication
   if (currentTab === 'public_status') {
     return <PublicStatusPageView onBackToDashboard={() => setCurrentTab('smon')} />;
+  }
+
+  // If not logged in, show LoginView
+  if (authChecked && !currentUser) {
+    return <LoginView onLoginSuccess={handleLoginSuccess} />;
   }
 
   const renderContent = () => {
@@ -114,7 +159,7 @@ export const App: React.FC = () => {
       {/* Left Sidebar */}
       <Sidebar
         currentTab={currentTab}
-        setCurrentTab={(tab: string) => setCurrentTab(tab)}
+        setCurrentTab={setCurrentTab}
         lang={lang}
       />
 
@@ -122,10 +167,11 @@ export const App: React.FC = () => {
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <Navbar
           lang={lang}
-          setLang={(l: Language) => setLang(l)}
+          setLang={setLang}
           activeAlerts={metrics?.active_alerts || 0}
+          currentUser={currentUser}
+          onLogout={handleLogout}
         />
-
         <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 space-y-6">
           {renderContent()}
         </main>
